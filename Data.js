@@ -433,15 +433,24 @@ function parseCallsign(raw) {
 }
 
 var RARITY_RANK = { common: 0, uncommon: 1, rare: 2, exotic: 3, unclassified: 1 }
+// Points a discovered type is worth toward the Logbook score.
+var RARITY_SCORE = { common: 1, uncommon: 3, rare: 8, exotic: 20, unclassified: 0 }
+
+function typeScore(code) {
+  var t = typeInfo(code)
+  return t ? (RARITY_SCORE[t.r] || 0) : 0
+}
 
 if (typeof module !== "undefined") {
   module.exports = {
     AIRCRAFT_TYPES: AIRCRAFT_TYPES,
     AIRLINES: AIRLINES,
     RARITY_RANK: RARITY_RANK,
+    RARITY_SCORE: RARITY_SCORE,
     typeInfo: typeInfo,
     typeName: typeName,
     typeShort: typeShort,
+    typeScore: typeScore,
     category: category,
     rarity: rarity,
     allTypeCodes: allTypeCodes,

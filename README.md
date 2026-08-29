@@ -16,10 +16,14 @@ aircraft types — built entirely on free community ADS-B data, no account.
   the selected aircraft it also looks up the **route** (origin → destination,
   with a progress bar and ETA), the **registered owner**, and — opt-in — a
   **photo** of that airframe.
-- **Logbook** — every type that crosses your range is recorded. A grid of what
-  you've spotted with per-type counts and rarity, a completion bar, spec cards,
-  and a "✦ new in your logbook" note when a type shows up for the first time.
-  The logbook card can show the actual airframe that earned you the entry.
+- **Logbook** — every type that crosses your range is recorded: a grid of what
+  you've spotted (per-type counts, rarity), a **score** (common 1 / uncommon 3 /
+  rare 8 / exotic 20), a completion bar, a "today" line, **18 achievements**, a
+  "still to find" nudge, class filters, and a one-tap shareable summary. A "✦
+  new in your logbook" note fires the first time a type shows up. Tap any entry
+  for its spec card — with the actual airframe that earned it, where a photo
+  exists. Optional strict mode: only count a type once it has genuinely passed
+  overhead.
 
 <p>
   <img src="preview.png" width="330" alt="Scope with an identity card open">
@@ -59,8 +63,9 @@ Then set your location (see below) and the scope fills in within a few seconds.
 
 In the widget's settings you can also turn off the new-type logbook note
 (`Notify when a new aircraft type is logged`), turn off route/owner lookup
-entirely (`Look up route & owner for the selected aircraft`), or turn on
-airframe photos (`Show a photo of the selected airframe`, off by default).
+entirely (`Look up route & owner for the selected aircraft`), turn on airframe
+photos (`Show a photo of the selected airframe`, off by default), or switch on
+strict logging (`Only log a type once it has actually passed overhead`).
 
 ## Setting your location
 
@@ -85,8 +90,11 @@ Flyby needs your latitude and longitude in decimal degrees.
 - **adsbdb.com** — `https://api.adsbdb.com/v0/callsign/{cs}` and `/v0/aircraft/{hex}` —
   route + registered owner for the **one aircraft you've selected**. Fired on
   select, not on the poll, and cached for the session.
-- **airport-data.com** — airframe photo, only when `Show a photo…` is on, only
-  for the selected aircraft.
+- **planespotters.net** — `https://api.planespotters.net/pub/photos/hex/{hex}` —
+  looked up in the same select-triggered request; supplies the photographer
+  credit and the photo for airframes airport-data.com doesn't have.
+- **airport-data.com** / **plnspttrs.net** — the airframe photo image itself,
+  only when `Show a photo…` is on, only for the selected aircraft.
 
 All free, no account, no API key. Please be a good citizen — the poll interval
 is deliberately gentle; don't crank it.
@@ -96,12 +104,15 @@ is deliberately gentle; don't crank it.
 - **Network:**
   - one HTTPS GET every 15 s to the selected feed (`api.adsb.lol` /
     `opendata.adsb.fi`), sending only your latitude/longitude/range in the URL;
-  - when you **select an aircraft** and route lookup is on (default): two HTTPS
-    GETs to `api.adsbdb.com` — one for the callsign, one for the ICAO hex —
-    cached so each airframe is fetched at most once per session;
+  - when you **select an aircraft** and route lookup is on (default): three
+    HTTPS GETs — `api.adsbdb.com` for the callsign and for the ICAO hex, and
+    `api.planespotters.net` for a photo by hex — cached so each airframe is
+    fetched at most once per session;
   - when **airframe photos** are on (off by default): the selected aircraft's
-    thumbnail is loaded from `airport-data.com`. The URL is host-checked before
-    the image element ever sees it, so it can only load from that host;
+    thumbnail is loaded from `airport-data.com` or `plnspttrs.net`. Every photo
+    URL — and the planespotters "open" link — is checked against a fixed host
+    allowlist before anything touches it, whether it came from the API or from
+    the logbook file;
   - "Locate me" makes one HTTPS GET to `ipapi.co/latlong/`.
   - Nothing else is sent anywhere; no query carries anything but coordinates,
     a callsign, or an ICAO hex.
@@ -117,9 +128,10 @@ is deliberately gentle; don't crank it.
   `~/.config/omarchy/shell.json` like every other bar widget.
 - **Bundled data:** `Data.js` — ~200 aircraft types and ~160 airline codes,
   static reference data compiled from public sources. Inert; no code runs from it.
-- **Processes:** `curl` (the fetches, each `timeout`-bounded and byte-capped)
-  and `omarchy-notification-send` (only for the overhead / new-type notes, when
-  you've enabled them).
+- **Processes:** `curl` (the fetches, each `timeout`-bounded and byte-capped),
+  `omarchy-notification-send` (overhead / new-type / achievement notes),
+  `wl-copy` (only when you tap "copy summary"), and `xdg-open` (only when you
+  tap a planespotters photo credit to open its page).
 - Every string that comes back from the API is stripped of markup and control
   characters and length-clamped before it is displayed.
 

@@ -240,13 +240,14 @@ function specSummary(info) {
   return out.join("  ·  ")
 }
 
-// Parse the combined adsbdb envelope { route: <callsign resp>, ac: <aircraft resp> }
-// produced by the enrichment fetch. Everything optional; missing pieces just
-// come back empty. Photo URLs are host-allowlisted here so the identity card's
-// Image element can only ever load from airport-data.com.
+// Parse the combined enrichment envelope
+//   { route: <adsbdb callsign resp>, ac: <adsbdb aircraft resp>, ps: <planespotters resp> }
+// Everything optional. Photo URLs and the planespotters page link are
+// host-allowlisted here, so the <Image> and any "open" action can only ever
+// touch airport-data.com / plnspttrs.net / planespotters.net.
 function parseEnrichment(rawText) {
   var out = { route: null, owner: "", ownerCountry: "", acType: "", reg: "",
-              photoThumb: "", photoFull: "" }
+              photoThumb: "", photoFull: "", photoBy: "", photoLink: "", photoSource: "" }
   var data
   try { data = JSON.parse(String(rawText || "{}")) } catch (e) { return out }
 
@@ -270,16 +271,40 @@ function parseEnrichment(rawText) {
     out.reg = cleanStr(ac.registration || "", 12)
     out.photoThumb = safePhotoUrl(ac.url_photo_thumbnail)
     out.photoFull = safePhotoUrl(ac.url_photo)
+    if (out.photoThumb) out.photoSource = "airport-data.com"
+  }
+  // planespotters fallback — much broader coverage for GA / private, and it
+  // carries a photographer credit + page link (which their terms ask for).
+  if (!out.photoThumb) {
+    var ps = data.ps && data.ps.photos && data.ps.photos[0]
+    if (ps) {
+      var pu = safePhotoUrl((ps.thumbnail_large && ps.thumbnail_large.src)
+                         || (ps.thumbnail && ps.thumbnail.src) || "")
+      if (pu) {
+        out.photoThumb = pu
+        out.photoFull = safePhotoUrl((ps.thumbnail_large && ps.thumbnail_large.src) || "") || pu
+        out.photoBy = cleanStr(ps.photographer || "", 48)
+        out.photoLink = safePageUrl(ps.link)
+        out.photoSource = "planespotters.net"
+      }
+    }
   }
   return out
 }
 
-// A photo URL is only ever used if it is an https airport-data.com image.
-// Applied on the way in from the API and again when reading one back off the
-// Logbook file, so a hand-edited file can't repoint the <Image>.
+// A photo URL is only ever used if it is an https image on one of the two
+// known photo hosts. Applied on the way in from the API and again when a URL
+// is read back off the Logbook file, so a hand-edited file can't repoint the
+// <Image>.
 function safePhotoUrl(u) {
   var s = String(u || "")
-  return /^https:\/\/(image\.)?airport-data\.com\/[\w./-]+\.(jpg|jpeg|png)$/i.test(s) ? s : ""
+  return /^https:\/\/(image\.airport-data\.com|airport-data\.com|[a-z0-9-]+\.plnspttrs\.net)\/[\w./-]+\.(jpe?g|png)$/i.test(s)
+    ? s : ""
+}
+// Only a planespotters.net photo page may be handed to an "open link" action.
+function safePageUrl(u) {
+  var s = String(u || "")
+  return /^https:\/\/www\.planespotters\.net\/photo\/[\w./?=&%-]+$/i.test(s) ? s : ""
 }
 
 // Progress along a great-circle route. `r` is parseEnrichment().route.
@@ -307,6 +332,109 @@ function fmtEta(min) {
   if (!isNum(min) || min < 0) return ""
   if (min < 60) return "~" + min + "m"
   return "~" + Math.floor(min / 60) + "h " + (min % 60) + "m"
+}
+
+// ---- Logbook: score, milestones, share text --------------------------------
+
+// One-time milestones. Each test() gets a small stats object built from the
+// Logbook; evalAchievements returns the ones newly satisfied (not already in
+// dex.achievements). Order here is display order.
+var ACHIEVEMENTS = [
+  { id: "first-log",      label: "Logbook opened",                     test: function (s) { return s.discovered >= 1 } },
+  { id: "types-10",       label: "10 types logged",                    test: function (s) { return s.discovered >= 10 } },
+  { id: "types-25",       label: "25 types logged",                    test: function (s) { return s.discovered >= 25 } },
+  { id: "types-50",       label: "50 types logged",                    test: function (s) { return s.discovered >= 50 } },
+  { id: "types-100",      label: "100 types — half the sky",           test: function (s) { return s.discovered >= 100 } },
+  { id: "first-heli",     label: "First helicopter",                   test: function (s) { return !!s.cats.heli } },
+  { id: "first-widebody", label: "First widebody",                     test: function (s) { return !!s.cats.widebody } },
+  { id: "first-turboprop",label: "First turboprop",                    test: function (s) { return !!s.cats.turboprop } },
+  { id: "first-biz",      label: "First business jet",                 test: function (s) { return !!s.cats.business } },
+  { id: "first-military", label: "First military aircraft",            test: function (s) { return !!s.cats.military } },
+  { id: "first-vintage",  label: "First vintage aircraft",             test: function (s) { return !!s.cats.vintage } },
+  { id: "first-rare",     label: "First rare type",                    test: function (s) { return !!s.rar.rare } },
+  { id: "first-exotic",   label: "First exotic — nice catch",          test: function (s) { return !!s.rar.exotic } },
+  { id: "full-house",     label: "Full house — all four rarity tiers", test: function (s) { return s.rar.common && s.rar.uncommon && s.rar.rare && s.rar.exotic } },
+  { id: "score-100",      label: "Logbook score 100",                  test: function (s) { return s.score >= 100 } },
+  { id: "score-250",      label: "Logbook score 250",                  test: function (s) { return s.score >= 250 } },
+  { id: "heavy-day",      label: "Heavy day — 30 sightings",           test: function (s) { return s.todaySightings >= 30 } },
+  { id: "red-eye",        label: "Red-eye — a catch before dawn",      test: function (s) { return s.redEye } }
+]
+
+function achievementTotal() { return ACHIEVEMENTS.length }
+function achievementLabel(id) {
+  for (var i = 0; i < ACHIEVEMENTS.length; i++) if (ACHIEVEMENTS[i].id === id) return ACHIEVEMENTS[i].label
+  return id
+}
+function achievementList() {
+  return ACHIEVEMENTS.map(function (a) { return { id: a.id, label: a.label } })
+}
+
+// Build the stats a test() needs from the current Logbook + a couple of
+// externally-derived values (today's sighting count, whether any sighting was
+// logged before dawn local).
+function logbookStats(D, dex, todaySightings, redEye) {
+  var s = { discovered: 0, score: 0, cats: {}, rar: {},
+            todaySightings: todaySightings || 0, redEye: !!redEye }
+  var t = (dex && dex.types) || {}
+  for (var c in t) {
+    var info = D.typeInfo(c)
+    if (!info) continue
+    s.discovered++
+    s.score += (D.RARITY_SCORE[info.r] || 0)
+    s.cats[info.c] = true
+    s.rar[info.r] = true
+  }
+  return s
+}
+
+function evalAchievements(D, dex, todaySightings, redEye) {
+  var s = logbookStats(D, dex, todaySightings, redEye)
+  var have = (dex && dex.achievements) || {}
+  var out = []
+  for (var i = 0; i < ACHIEVEMENTS.length; i++) {
+    var a = ACHIEVEMENTS[i]
+    if (!have[a.id] && a.test(s)) out.push({ id: a.id, label: a.label })
+  }
+  return out
+}
+
+// Highest-rarity discovered type (for the share blurb). Ties break by name.
+function rarestType(D, dex) {
+  var best = null, bestRank = -1
+  var t = (dex && dex.types) || {}
+  for (var c in t) {
+    var info = D.typeInfo(c)
+    if (!info) continue
+    var rank = D.RARITY_RANK[info.r]
+    if (rank > bestRank) { bestRank = rank; best = { code: c, name: info.n, rarity: info.r } }
+  }
+  return best
+}
+
+function logbookScore(D, dex) {
+  var n = 0, t = (dex && dex.types) || {}
+  for (var c in t) n += D.typeScore(c)
+  return n
+}
+
+// Clipboard-friendly one-liner.
+function logbookSummary(D, dex, universe) {
+  var s = logbookStats(D, dex, 0, false)
+  var r = rarestType(D, dex)
+  var bits = ["✈ Flyby logbook — " + s.discovered + "/" + universe + " types",
+              "score " + s.score]
+  if (s.rar.rare || s.rar.exotic) {
+    var rare = 0, exotic = 0
+    for (var c in (dex.types || {})) {
+      var i = D.typeInfo(c); if (!i) continue
+      if (i.r === "rare") rare++; else if (i.r === "exotic") exotic++
+    }
+    if (rare) bits.push(rare + " rare")
+    if (exotic) bits.push(exotic + " exotic")
+  }
+  var line = bits.join(" · ")
+  if (r && (r.rarity === "rare" || r.rarity === "exotic")) line += "\nRarest catch: " + r.name
+  return line + "\n#omarchy #flyby"
 }
 
 // api URL for a provider. lat/lon already validated numeric by the caller;
@@ -357,8 +485,17 @@ if (typeof module !== "undefined") {
     specSummary: specSummary,
     parseEnrichment: parseEnrichment,
     safePhotoUrl: safePhotoUrl,
+    safePageUrl: safePageUrl,
     routeProgress: routeProgress,
     fmtEta: fmtEta,
+    achievementTotal: achievementTotal,
+    achievementLabel: achievementLabel,
+    achievementList: achievementList,
+    evalAchievements: evalAchievements,
+    logbookStats: logbookStats,
+    logbookScore: logbookScore,
+    rarestType: rarestType,
+    logbookSummary: logbookSummary,
     apiUrl: apiUrl,
     pillText: pillText
   }

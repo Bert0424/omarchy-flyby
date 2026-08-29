@@ -29,7 +29,8 @@
       "readablePill": false,
       "altColor": false,
       "routeLookup": true,
-      "showPhotos": false
+      "showPhotos": false,
+      "overheadOnlyLog": false
     },
     "schema": [
       { "key": "latitude", "type": "string", "label": "Latitude", "description": "Decimal degrees, e.g. 29.4241. Leave blank and use “Locate me” in the popup." },
@@ -43,7 +44,8 @@
       { "key": "readablePill", "type": "boolean", "label": "Bar pill shows aircraft type instead of callsign", "defaultValue": false },
       { "key": "altColor", "type": "boolean", "label": "Colour radar blips by altitude", "defaultValue": false },
       { "key": "routeLookup", "type": "boolean", "label": "Look up route & owner for the selected aircraft (adsbdb.com)", "defaultValue": true },
-      { "key": "showPhotos", "type": "boolean", "label": "Show a photo of the selected airframe (loads from airport-data.com)", "defaultValue": false }
+      { "key": "showPhotos", "type": "boolean", "label": "Show a photo of the selected airframe (airport-data.com / planespotters.net)", "defaultValue": false },
+      { "key": "overheadOnlyLog", "type": "boolean", "label": "Only log a type once it has actually passed overhead (within 3 km)", "defaultValue": false }
     ]
   }
 }

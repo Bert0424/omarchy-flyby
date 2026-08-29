@@ -49,6 +49,7 @@ Panel {
   readonly property bool altColor:        boolVal("altColor", false)
   readonly property bool routeLookup:     boolVal("routeLookup", true)
   readonly property bool showPhotos:      boolVal("showPhotos", false)
+  readonly property bool overheadOnlyLog: boolVal("overheadOnlyLog", false)
 
   // ---- state ----------------------------------------------------------
   property var aircraft: []
@@ -62,9 +63,13 @@ Panel {
   // "scope" | "dex"
   property string view: "scope"
   property string dexSelectedCode: ""
+  // Logbook grid filter: "all" | "airliner" | "light" | "rotor" | "milvintage"
+  property string dexFilter: "all"
+  property bool dexShowAchievements: false
+  property bool summaryCopied: false
 
-  // Dex model: { v:1, types: { CODE: {n,first,last,firstCs} }, log: [ ... ] }
-  property var dex: ({ v: 1, types: ({}), log: [] })
+  // Dex model: { v:1, types:{CODE:{n,first,last,firstCs,photo,...}}, log:[...], achievements:{id:iso} }
+  property var dex: ({ v: 1, types: ({}), log: [], achievements: ({}) })
   property bool dexLoaded: false
   // hex codes confirmed present on the previous poll — a type only counts
   // toward the Dex once we've seen the same airframe twice running, so a
@@ -73,6 +78,43 @@ Panel {
   property int dexDiscoveredCount: 0
   property int dexRareCount: 0
   property int dexExoticCount: 0
+  property int dexScore: 0
+  property int achievementsUnlocked: 0
+
+  // Today's activity, from the sightings log (local date).
+  readonly property var dexToday: {
+    var now = new Date()
+    var key = now.getFullYear() + "-" + now.getMonth() + "-" + now.getDate()
+    var seen = 0, codes = ({}), fresh = 0
+    var log = (root.dex && root.dex.log) || []
+    for (var i = 0; i < log.length; i++) {
+      var d = new Date(log[i].t)
+      if (d.getFullYear() + "-" + d.getMonth() + "-" + d.getDate() !== key) continue
+      seen++
+      if (log[i].code) codes[log[i].code] = true
+    }
+    var types = (root.dex && root.dex.types) || {}
+    for (var c in types) {
+      var f = new Date(types[c].first)
+      if (f.getFullYear() + "-" + f.getMonth() + "-" + f.getDate() === key && Data.typeInfo(c)) fresh++
+    }
+    return { sightings: seen, types: Object.keys(codes).length, fresh: fresh }
+  }
+
+  // Common types still missing from the Logbook — an achievable next target.
+  // Deduped by display name (AT72/AT75/AT76 all read "ATR 72").
+  readonly property var missingCommons: {
+    var out = [], seen = ({}), t = (root.dex && root.dex.types) || {}
+    var all = Data.allTypeCodes()
+    for (var i = 0; i < all.length && out.length < 7; i++) {
+      if (Data.rarity(all[i]) !== "common" || t[all[i]]) continue
+      var s = Data.typeShort(all[i])
+      if (seen[s]) continue
+      seen[s] = true
+      out.push(s)
+    }
+    return out
+  }
 
   // The aircraft the identity card is showing, resolved from selectedHex.
   readonly property var selAc: {
@@ -109,25 +151,40 @@ Panel {
     var hex = String(h).replace(/[^A-Fa-f0-9]/g, "")
     if (!hex) return
     // Full URLs built here and passed as args — the script never interpolates
-    // them, and both hosts are fixed. A missing callsign just skips the route.
+    // them, and every host is fixed. A missing callsign just skips the route.
     var routeUrl = cs ? "https://api.adsbdb.com/v0/callsign/" + cs : "https://api.adsbdb.com/v0/"
     var acUrl = "https://api.adsbdb.com/v0/aircraft/" + hex
+    var psUrl = "https://api.planespotters.net/pub/photos/hex/" + hex
     root.enriching = true
     root._enrichHex = h
     enrichProc.command = ["bash", "-c",
-      'a=$(timeout 6 curl -sS --max-time 5 -A "$3" -- "$1" | head -c 20000); '
-      + 'b=$(timeout 6 curl -sS --max-time 5 -A "$3" -- "$2" | head -c 20000); '
-      + 'printf \'{"route":%s,"ac":%s}\' "${a:-null}" "${b:-null}"',
-      "flyby", routeUrl, acUrl, root.userAgent]
+      'a=$(timeout 6 curl -sS --max-time 5 -A "$4" -- "$1" | head -c 20000); '
+      + 'b=$(timeout 6 curl -sS --max-time 5 -A "$4" -- "$2" | head -c 20000); '
+      + 'c=$(timeout 6 curl -sS --max-time 5 -A "$4" -- "$3" | head -c 20000); '
+      + 'printf \'{"route":%s,"ac":%s,"ps":%s}\' "${a:-null}" "${b:-null}" "${c:-null}"',
+      "flyby", routeUrl, acUrl, psUrl, root.userAgent]
     enrichProc.running = true
   }
   property string _enrichHex: ""
 
-  // Type codes for the Logbook grid: discovered first (most-seen first),
-  // then the rest alphabetically. Recomputes when `dex` is reassigned.
+  // Which categories each Logbook filter shows.
+  function _filterCats(f) {
+    if (f === "airliner")   return { widebody: 1, narrowbody: 1, regional: 1 }
+    if (f === "light")      return { piston: 1, turboprop: 1, business: 1 }
+    if (f === "rotor")      return { heli: 1 }
+    if (f === "milvintage") return { military: 1, vintage: 1 }
+    return null   // "all"
+  }
+
+  // Type codes for the Logbook grid: filtered, then discovered first
+  // (most-seen first), then the rest alphabetically. Recomputes when `dex`
+  // or `dexFilter` changes.
   readonly property var dexGridModel: {
-    var codes = Data.allTypeCodes()
     var t = root.dex.types || {}
+    var cats = root._filterCats(root.dexFilter)
+    var codes = Data.allTypeCodes().filter(function (c) {
+      return !cats || cats[Data.category(c)]
+    })
     codes.sort(function (a, b) {
       var da = t[a] ? 1 : 0, db = t[b] ? 1 : 0
       if (da !== db) return db - da
@@ -135,6 +192,11 @@ Panel {
       return a < b ? -1 : 1
     })
     return codes
+  }
+  readonly property int dexFilterGot: {
+    var t = root.dex.types || {}, n = 0
+    for (var i = 0; i < root.dexGridModel.length; i++) if (t[root.dexGridModel[i]]) n++
+    return n
   }
 
   readonly property int count: aircraft.length
@@ -214,6 +276,7 @@ Panel {
     var d = root.dex
     var types = d.types || (d.types = {})
     var log = d.log || (d.log = [])
+    if (!d.achievements) d.achievements = {}
     var nowIso = new Date().toISOString()
     var discovered = []
     var changed = false
@@ -224,6 +287,9 @@ Panel {
       seenNow[a.hex] = true
       var confirmed = root._prevHexes[a.hex] === true
       if (!confirmed) continue
+      // Overhead-only mode: a type is earned only once it has actually passed
+      // within the overhead radius, airborne — not merely somewhere in range.
+      if (root.overheadOnlyLog && (a.onGround || !(a.distKm <= Model.OVERHEAD_KM))) continue
 
       var code = a.id.typeCode
       if (!code) continue
@@ -250,12 +316,28 @@ Panel {
 
     root._prevHexes = seenNow
     if (changed) {
+      // milestones — derive today's sighting count + a pre-dawn flag from the log
+      var nowKey = root._dayKey(new Date())
+      var todayN = 0, redEye = false
+      for (var li = 0; li < d.log.length; li++) {
+        var ld = new Date(d.log[li].t)
+        if (root._dayKey(ld) === nowKey) todayN++
+        if (ld.getHours() < 5) redEye = true
+      }
+      var newAch = Model.evalAchievements(Data, d, todayN, redEye)
+      for (var ai = 0; ai < newAch.length; ai++) {
+        d.achievements[newAch[ai].id] = nowIso
+        root.announceAchievement(newAch[ai].label)
+      }
+
       root.dex = d                     // reassign so bindings react
       root.recountDex()
       root.persistDex()
     }
     for (var k = 0; k < discovered.length; k++) root.announceDiscovery(discovered[k])
   }
+
+  function _dayKey(dt) { return dt.getFullYear() + "-" + dt.getMonth() + "-" + dt.getDate() }
 
   function recountDex() {
     var n = 0, rare = 0, exotic = 0, t = root.dex.types || {}
@@ -269,6 +351,30 @@ Panel {
     root.dexDiscoveredCount = n
     root.dexRareCount = rare
     root.dexExoticCount = exotic
+    root.dexScore = Model.logbookScore(Data, root.dex)
+    root.achievementsUnlocked = Object.keys(root.dex.achievements || {}).length
+  }
+
+  function announceAchievement(label) {
+    Quickshell.execDetached([
+      "omarchy-notification-send", "--app-name", "flyby", "-u", "normal",
+      "🏅 " + label, "Flyby logbook · " + root.dexScore + " pts"
+    ])
+  }
+
+  // Put a share-ready summary of the Logbook on the clipboard. The text always
+  // begins with "✈", so it can't be misread by wl-copy as an option.
+  function copySummary() {
+    var text = Model.logbookSummary(Data, root.dex, root.dexUniverse)
+    Quickshell.execDetached(["wl-copy", text])
+    root.summaryCopied = true
+    summaryResetTimer.restart()
+  }
+
+  // Open a photo's source page — only ever a validated planespotters.net URL.
+  function openPhotoLink(url) {
+    var safe = Model.safePageUrl(url)
+    if (safe) Quickshell.execDetached(["xdg-open", safe])
   }
 
   function announceDiscovery(code) {
@@ -400,7 +506,8 @@ Panel {
         try { parsed = Model.parseEnrichment(enrichOut.text) } catch (e) { parsed = null }
         var next = ({})
         for (var k in root._enrichCache) next[k] = root._enrichCache[k]
-        next[h] = (parsed && (parsed.route || parsed.owner || parsed.acType)) ? parsed : "miss"
+        next[h] = (parsed && (parsed.route || parsed.owner || parsed.acType || parsed.photoThumb))
+                  ? parsed : "miss"
         // keep the cache from growing without bound over a long session
         var keys = Object.keys(next)
         if (keys.length > 120) delete next[keys[0]]
@@ -417,6 +524,9 @@ Panel {
           if (code && d.types && d.types[code] && !d.types[code].photo) {
             d.types[code].photo = parsed.photoThumb
             d.types[code].photoReg = (a.reg || parsed.reg || "")
+            d.types[code].photoBy = parsed.photoBy || ""
+            d.types[code].photoLink = parsed.photoLink || ""
+            d.types[code].photoSource = parsed.photoSource || ""
             root.dex = d
             root.persistDex()
           }
@@ -429,6 +539,7 @@ Panel {
   }
 
   Timer { id: retryTimer; interval: 6000; onTriggered: root.refresh() }
+  Timer { id: summaryResetTimer; interval: 2000; onTriggered: root.summaryCopied = false }
 
   Timer {
     id: refreshTimer
@@ -456,7 +567,9 @@ Panel {
       root.dex = {
         v: 1,
         types: (parsed.types && typeof parsed.types === "object") ? parsed.types : ({}),
-        log: Array.isArray(parsed.log) ? parsed.log.slice(-500) : []
+        log: Array.isArray(parsed.log) ? parsed.log.slice(-500) : [],
+        achievements: (parsed.achievements && typeof parsed.achievements === "object")
+                      ? parsed.achievements : ({})
       }
     }
     root.dexLoaded = true
@@ -468,7 +581,7 @@ Panel {
   }
 
   function forgetDex() {
-    root.dex = { v: 1, types: ({}), log: [] }
+    root.dex = { v: 1, types: ({}), log: [], achievements: ({}) }
     root.dexSelectedCode = ""
     root.recountDex()
     root.persistDex()
@@ -1096,7 +1209,7 @@ Panel {
             }
 
             // photo of the airframe — opt-in (loads a remote image), and only
-            // ever from airport-data.com (URL host-checked in parseEnrichment).
+            // ever from a host-checked airport-data.com / plnspttrs.net URL.
             Text {
               visible: !root.showPhotos && !!(idCard.enr && idCard.enr.photoThumb)
               width: parent.width
@@ -1133,7 +1246,12 @@ Panel {
             }
             Text {
               visible: root.showPhotos && flybyPhoto.status === Image.Ready
-              text: "photo: airport-data.com  ·  tap to hide"
+              width: parent.width
+              wrapMode: Text.WordWrap
+              readonly property bool hasLink: !!(idCard.enr && idCard.enr.photoLink)
+              text: (idCard.enr && idCard.enr.photoBy ? "photo © " + idCard.enr.photoBy + "  ·  " : "photo · ")
+                  + (idCard.enr && idCard.enr.photoSource ? idCard.enr.photoSource : "")
+                  + (hasLink ? "  ·  tap to open" : "  ·  tap to hide")
               color: Qt.darker(root.fg, 1.9)
               font.family: root.ff
               font.pixelSize: Style.font.caption
@@ -1141,7 +1259,8 @@ Panel {
               MouseArea {
                 anchors.fill: parent
                 cursorShape: Qt.PointingHandCursor
-                onClicked: root.put("showPhotos", false)
+                onClicked: parent.hasLink ? root.openPhotoLink(idCard.enr.photoLink)
+                                          : root.put("showPhotos", false)
               }
             }
           }
@@ -1155,9 +1274,11 @@ Panel {
 
           Text {
             width: parent.width
-            text: root.dexDiscoveredCount + " / " + root.dexUniverse + " types logged"
-                + (root.dexRareCount > 0 ? "   ·   " + root.dexRareCount + " rare" : "")
-                + (root.dexExoticCount > 0 ? "   ·   " + root.dexExoticCount + " exotic" : "")
+            wrapMode: Text.WordWrap
+            text: root.dexDiscoveredCount + " / " + root.dexUniverse + " types  ·  score "
+                + root.dexScore
+                + (root.dexRareCount > 0 ? "  ·  " + root.dexRareCount + " rare" : "")
+                + (root.dexExoticCount > 0 ? "  ·  " + root.dexExoticCount + " exotic" : "")
             color: Qt.darker(root.fg, 1.2)
             font.family: root.ff
             font.pixelSize: Style.font.bodySmall
@@ -1179,6 +1300,18 @@ Panel {
           }
 
           Text {
+            visible: root.dexToday.sightings > 0
+            width: parent.width
+            wrapMode: Text.WordWrap
+            text: "today — " + root.dexToday.types + " types · " + root.dexToday.sightings
+                + " seen" + (root.dexToday.fresh > 0 ? " · " + root.dexToday.fresh + " new" : "")
+            color: Qt.darker(root.fg, 1.45)
+            font.family: root.ff
+            font.pixelSize: Style.font.caption
+            textFormat: Text.PlainText
+          }
+
+          Text {
             visible: root.dexDiscoveredCount === 0
             width: parent.width
             wrapMode: Text.WordWrap
@@ -1188,6 +1321,129 @@ Panel {
             font.family: root.ff
             font.pixelSize: Style.font.caption
             font.italic: true
+          }
+
+          // ---- achievements (collapsible)
+          Column {
+            width: parent.width
+            spacing: Style.space(5)
+            visible: root.dexDiscoveredCount > 0
+
+            Text {
+              width: parent.width
+              text: "🏅 achievements  " + root.achievementsUnlocked + " / " + Model.achievementTotal()
+                  + (root.dexShowAchievements ? "  ▾" : "  ▸")
+              color: Qt.darker(root.fg, 1.3)
+              font.family: root.ff
+              font.pixelSize: Style.font.caption
+              textFormat: Text.PlainText
+              MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.dexShowAchievements = !root.dexShowAchievements
+              }
+            }
+
+            Flow {
+              width: parent.width
+              spacing: Style.space(5)
+              visible: root.dexShowAchievements
+              Repeater {
+                model: Model.achievementList()
+                Rectangle {
+                  required property var modelData
+                  readonly property bool got: !!(root.dex.achievements
+                                                 && root.dex.achievements[modelData.id])
+                  width: achL.implicitWidth + Style.space(12)
+                  height: achL.implicitHeight + Style.space(6)
+                  radius: Style.cornerRadius
+                  color: got ? Style.selectedFillFor(root.fg, Color.accent)
+                             : Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.04)
+                  Text {
+                    id: achL
+                    anchors.centerIn: parent
+                    text: (parent.got ? "🏅 " : "🔒 ") + modelData.label
+                    color: parent.got ? Color.accent : Qt.darker(root.fg, 1.9)
+                    font.family: root.ff
+                    font.pixelSize: Style.font.caption
+                    textFormat: Text.PlainText
+                  }
+                }
+              }
+            }
+          }
+
+          // ---- still-to-find nudge
+          Text {
+            visible: root.dexDiscoveredCount > 0 && root.missingCommons.length > 0
+            width: parent.width
+            wrapMode: Text.WordWrap
+            text: "still to find (common): " + root.missingCommons.join("  ·  ")
+            color: Qt.darker(root.fg, 1.6)
+            font.family: root.ff
+            font.pixelSize: Style.font.caption
+            textFormat: Text.PlainText
+          }
+          Text {
+            visible: root.dexDiscoveredCount > 0 && root.missingCommons.length === 0
+            width: parent.width
+            text: "every common type logged 🎉"
+            color: Color.accent
+            font.family: root.ff
+            font.pixelSize: Style.font.caption
+            textFormat: Text.PlainText
+          }
+
+          // ---- grid filter chips
+          Flow {
+            width: parent.width
+            spacing: Style.space(5)
+            visible: root.dexDiscoveredCount > 0
+            Repeater {
+              model: [
+                { k: "all",        l: "all" },
+                { k: "airliner",   l: "airliners" },
+                { k: "light",      l: "GA / biz" },
+                { k: "rotor",      l: "rotor" },
+                { k: "milvintage", l: "mil / vintage" }
+              ]
+              Rectangle {
+                required property var modelData
+                readonly property bool on: root.dexFilter === modelData.k
+                width: fl.implicitWidth + Style.space(14)
+                height: fl.implicitHeight + Style.space(7)
+                radius: Style.cornerRadius
+                color: on ? Style.selectedFillFor(root.fg, Color.accent)
+                     : flArea.containsMouse ? Style.hoverFillFor(root.fg, Color.accent)
+                     : Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.05)
+                Text {
+                  id: fl
+                  anchors.centerIn: parent
+                  text: modelData.l
+                  color: parent.on ? Color.accent : Qt.darker(root.fg, 1.4)
+                  font.family: root.ff
+                  font.pixelSize: Style.font.caption
+                  font.bold: parent.on
+                  textFormat: Text.PlainText
+                }
+                MouseArea {
+                  id: flArea
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: { root.dexFilter = modelData.k; root.dexSelectedCode = "" }
+                }
+              }
+            }
+          }
+          Text {
+            visible: root.dexDiscoveredCount > 0 && root.dexFilter !== "all"
+            width: parent.width
+            text: root.dexFilterGot + " / " + root.dexGridModel.length + " in this group"
+            color: Qt.darker(root.fg, 1.7)
+            font.family: root.ff
+            font.pixelSize: Style.font.caption
+            textFormat: Text.PlainText
           }
 
           // spec card for a tapped Logbook entry
@@ -1281,8 +1537,11 @@ Panel {
                 visible: root.showPhotos && dexPhoto.status === Image.Ready
                 width: parent.width
                 wrapMode: Text.WordWrap
+                readonly property bool hasLink: Model.safePageUrl(dexCard.e ? dexCard.e.photoLink : "") !== ""
                 text: (dexCard.e && dexCard.e.photoReg ? dexCard.e.photoReg + "  ·  " : "")
-                      + "photo: airport-data.com  ·  tap to hide"
+                      + (dexCard.e && dexCard.e.photoBy ? "© " + dexCard.e.photoBy + "  ·  " : "")
+                      + (dexCard.e && dexCard.e.photoSource ? dexCard.e.photoSource : "photo")
+                      + (hasLink ? "  ·  tap to open" : "  ·  tap to hide")
                 color: Qt.darker(root.fg, 1.9)
                 font.family: root.ff
                 font.pixelSize: Style.font.caption
@@ -1290,7 +1549,8 @@ Panel {
                 MouseArea {
                   anchors.fill: parent
                   cursorShape: Qt.PointingHandCursor
-                  onClicked: root.put("showPhotos", false)
+                  onClicked: parent.hasLink ? root.openPhotoLink(dexCard.e.photoLink)
+                                            : root.put("showPhotos", false)
                 }
               }
             }
@@ -1302,7 +1562,7 @@ Panel {
             spacing: Style.space(5)
 
             Repeater {
-              model: root.dexGridModel.slice(0, root.dexDiscoveredCount + 24)
+              model: root.dexGridModel.slice(0, root.dexFilterGot + 24)
               Rectangle {
                 required property var modelData
                 readonly property var info: Data.typeInfo(modelData)
@@ -1360,9 +1620,9 @@ Panel {
           }
 
           Text {
-            visible: root.dexGridModel.length > root.dexDiscoveredCount + 24
+            visible: root.dexGridModel.length > root.dexFilterGot + 24
             width: parent.width
-            text: "＋ " + (root.dexGridModel.length - root.dexDiscoveredCount - 24)
+            text: "＋ " + (root.dexGridModel.length - root.dexFilterGot - 24)
                 + " more types out there to spot"
             color: Qt.darker(root.fg, 1.7)
             font.family: root.ff
@@ -1370,19 +1630,59 @@ Panel {
             textFormat: Text.PlainText
           }
 
-          Text {
+          Row {
             visible: root.dexDiscoveredCount > 0
             width: parent.width
-            horizontalAlignment: Text.AlignHCenter
+            spacing: Style.space(8)
             topPadding: Style.space(2)
-            text: "clear logbook"
-            color: Qt.darker(root.fg, 1.8)
-            font.family: root.ff
-            font.pixelSize: Style.font.caption
-            MouseArea {
-              anchors.fill: parent
-              cursorShape: Qt.PointingHandCursor
-              onClicked: root.forgetDex()
+
+            Rectangle {
+              width: csLabel.implicitWidth + Style.space(16)
+              height: csLabel.implicitHeight + Style.space(8)
+              radius: Style.cornerRadius
+              color: root.summaryCopied ? Style.selectedFillFor(root.fg, Color.accent)
+                   : csArea.containsMouse ? Style.hoverFillFor(root.fg, Color.accent)
+                   : Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.06)
+              Text {
+                id: csLabel
+                anchors.centerIn: parent
+                text: root.summaryCopied ? "copied ✓" : "📋 copy summary"
+                color: root.summaryCopied ? Color.accent : Qt.darker(root.fg, 1.3)
+                font.family: root.ff
+                font.pixelSize: Style.font.caption
+                textFormat: Text.PlainText
+              }
+              MouseArea {
+                id: csArea
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.copySummary()
+              }
+            }
+
+            Rectangle {
+              width: clLabel.implicitWidth + Style.space(16)
+              height: clLabel.implicitHeight + Style.space(8)
+              radius: Style.cornerRadius
+              color: clArea.containsMouse ? Style.hoverFillFor(root.fg, Color.urgent)
+                                          : Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.04)
+              Text {
+                id: clLabel
+                anchors.centerIn: parent
+                text: "clear logbook"
+                color: Qt.darker(root.fg, 1.7)
+                font.family: root.ff
+                font.pixelSize: Style.font.caption
+                textFormat: Text.PlainText
+              }
+              MouseArea {
+                id: clArea
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.forgetDex()
+              }
             }
           }
         }
