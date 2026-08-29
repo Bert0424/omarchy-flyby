@@ -130,6 +130,10 @@ Panel {
   // route/owner are effectively static so one lookup per airframe is plenty.
   property var _enrichCache: ({})
   property bool enriching: false
+  // on-tap photo lookup for a Logbook entry that has none pinned
+  property var _dexPhotoTried: ({})
+  property string _dexPhotoCode: ""
+  property bool _dexPhotoLoading: false
   readonly property var selEnrich: {
     var h = root.selectedHex, c = h ? root._enrichCache[h] : null
     return (c && c !== "miss") ? c : null
@@ -296,12 +300,14 @@ Panel {
       var known = a.id.known
       var e = types[code]
       if (!e) {
-        types[code] = { n: 1, first: nowIso, last: nowIso, firstCs: a.callsign || "" }
+        types[code] = { n: 1, first: nowIso, last: nowIso,
+                        firstCs: a.callsign || "", hex: a.hex || "" }
         changed = true
         if (known) discovered.push(code)     // only celebrate real, named types
       } else {
         e.n = (e.n || 0) + 1
         e.last = nowIso
+        if (a.hex) e.hex = a.hex              // keep a hex on file for photo lookup
         changed = true
       }
 
@@ -375,6 +381,74 @@ Panel {
   function openPhotoLink(url) {
     var safe = Model.safePageUrl(url)
     if (safe) Quickshell.execDetached(["xdg-open", safe])
+  }
+
+  // Newest hex we've logged for a type (fallback when the type entry predates
+  // the `hex` field).
+  function _logHexFor(code) {
+    var log = (root.dex && root.dex.log) || []
+    for (var i = log.length - 1; i >= 0; i--)
+      if (log[i].code === code && log[i].hex) return log[i].hex
+    return ""
+  }
+
+  // Fill in a Logbook entry's photo on demand — when its card is opened and it
+  // has none pinned. One lookup per type per session; a genuine "no photo"
+  // result is remembered in the file so it isn't retried.
+  function maybeDexPhoto() {
+    var code = root.dexSelectedCode
+    if (!code || !root.showPhotos || !root.routeLookup) return
+    var e = root.dex.types ? root.dex.types[code] : null
+    if (!e || e.photo || e.photoNone || root._dexPhotoTried[code] || dexPhotoProc.running) return
+    var hex = String(e.hex || root._logHexFor(code)).replace(/[^A-Fa-f0-9]/g, "")
+    if (!hex) return
+    var tried = ({})
+    for (var k in root._dexPhotoTried) tried[k] = root._dexPhotoTried[k]
+    tried[code] = true
+    root._dexPhotoTried = tried
+    root._dexPhotoCode = code
+    root._dexPhotoLoading = true
+    dexPhotoProc.command = ["bash", "-c",
+      'b=$(timeout 6 curl -sS --max-time 5 -A "$3" -- "$1" | head -c 20000); '
+      + 'c=$(timeout 6 curl -sS --max-time 5 -A "$3" -- "$2" | head -c 20000); '
+      + 'printf \'{"ac":%s,"ps":%s}\' "${b:-null}" "${c:-null}"',
+      "flyby",
+      "https://api.adsbdb.com/v0/aircraft/" + hex,
+      "https://api.planespotters.net/pub/photos/hex/" + hex,
+      root.userAgent]
+    dexPhotoProc.running = true
+  }
+  onDexSelectedCodeChanged: root.maybeDexPhoto()
+  onShowPhotosChanged: if (showPhotos) root.maybeDexPhoto()
+
+  Process {
+    id: dexPhotoProc
+    stdout: StdioCollector {
+      id: dexPhotoOut
+      waitForEnd: true
+      onStreamFinished: {
+        var code = root._dexPhotoCode
+        root._dexPhotoLoading = false
+        if (!code) return
+        var parsed
+        try { parsed = Model.parseEnrichment(dexPhotoOut.text) } catch (e) { parsed = null }
+        var d = root.dex
+        var entry = d.types ? d.types[code] : null
+        if (!entry) return
+        if (parsed && parsed.photoThumb) {
+          entry.photo = parsed.photoThumb
+          entry.photoBy = parsed.photoBy || ""
+          entry.photoLink = parsed.photoLink || ""
+          entry.photoSource = parsed.photoSource || ""
+          if (parsed.reg && !entry.photoReg) entry.photoReg = parsed.reg
+        } else {
+          entry.photoNone = true            // remembered so we don't retry
+        }
+        root.dex = d
+        root.persistDex()
+      }
+    }
+    onExited: function (c) { if (c !== 0) root._dexPhotoLoading = false }
   }
 
   function announceDiscovery(code) {
@@ -564,13 +638,21 @@ Panel {
     var parsed = null
     try { parsed = text ? JSON.parse(text) : null } catch (e) { parsed = null }
     if (parsed && typeof parsed === "object") {
-      root.dex = {
+      var d = {
         v: 1,
         types: (parsed.types && typeof parsed.types === "object") ? parsed.types : ({}),
         log: Array.isArray(parsed.log) ? parsed.log.slice(-500) : [],
         achievements: (parsed.achievements && typeof parsed.achievements === "object")
                       ? parsed.achievements : ({})
       }
+      // Backfill a hex on entries that predate the field, from the log, so an
+      // on-tap photo lookup has something to work with right away.
+      for (var i = d.log.length - 1; i >= 0; i--) {
+        var le = d.log[i]
+        if (le.code && le.hex && d.types[le.code] && !d.types[le.code].hex)
+          d.types[le.code].hex = le.hex
+      }
+      root.dex = d
     }
     root.dexLoaded = true
     root.recountDex()
@@ -1450,6 +1532,7 @@ Panel {
           Rectangle {
             width: parent.width
             visible: root.dexSelectedCode !== "" && Data.typeInfo(root.dexSelectedCode) !== null
+            onVisibleChanged: if (visible) root.maybeDexPhoto()
             radius: Style.cornerRadius
             color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.05)
             clip: true
@@ -1463,9 +1546,14 @@ Panel {
               spacing: Style.space(3)
               readonly property var info: Data.typeInfo(root.dexSelectedCode)
               readonly property var e: root.dex.types ? root.dex.types[root.dexSelectedCode] : null
-              // photo pinned from the first airframe of this type we looked up,
+              // photo pinned from an airframe of this type we've looked up,
               // re-checked against the host allowlist on the way out of the file
               readonly property string photo: Model.safePhotoUrl(e ? e.photo : "")
+              // is a photo lookup even possible for this entry?
+              readonly property bool canLookup:
+                  !!(e && !e.photoNone && (e.hex || root._logHexFor(root.dexSelectedCode)))
+              readonly property bool looking:
+                  root._dexPhotoLoading && root._dexPhotoCode === root.dexSelectedCode
               Text {
                 width: parent.width
                 text: dexCard.info ? dexCard.info.n : ""
@@ -1499,9 +1587,10 @@ Panel {
                 textFormat: Text.PlainText
               }
 
-              // airframe photo — same opt-in as the identity card
+              // airframe photo — same opt-in as the identity card. Tapping a
+              // Logbook entry looks one up on the spot if none is pinned yet.
               Text {
-                visible: !root.showPhotos && dexCard.photo !== ""
+                visible: !root.showPhotos && (dexCard.photo !== "" || dexCard.canLookup)
                 width: parent.width
                 text: "＋ show airframe photo"
                 color: Color.accent
@@ -1515,9 +1604,21 @@ Panel {
                 }
               }
               Text {
-                visible: root.showPhotos && dexPhoto.status === Image.Loading
-                text: "loading photo…"
+                visible: root.showPhotos && dexCard.photo === ""
+                        && (dexCard.looking || dexPhoto.status === Image.Loading)
+                text: "looking up a photo…"
                 color: Qt.darker(root.fg, 1.6)
+                font.family: root.ff
+                font.pixelSize: Style.font.caption
+                font.italic: true
+                textFormat: Text.PlainText
+              }
+              Text {
+                visible: root.showPhotos && dexCard.photo === "" && !dexCard.looking
+                        && !!(dexCard.e && dexCard.e.photoNone)
+                width: parent.width
+                text: "no photo on file for this airframe"
+                color: Qt.darker(root.fg, 1.8)
                 font.family: root.ff
                 font.pixelSize: Style.font.caption
                 font.italic: true
