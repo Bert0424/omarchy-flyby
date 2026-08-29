@@ -2,7 +2,8 @@
 
 An Omarchy bar widget that turns the sky over your head into a **radar scope**,
 an **identity card** for anything on it, and a **logbook** you fill by spotting
-aircraft types — built entirely on free community ADS-B data, no account.
+aircraft types — part flight tracker, part Pokédex for planes. Built entirely on
+free community ADS-B data, no account.
 
 - **Scope** — a sweeping radar; each contact is a silhouette for its class
   (widebody, narrowbody, GA, helicopter, military, vintage…), placed by real
