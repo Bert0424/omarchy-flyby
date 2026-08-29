@@ -876,6 +876,7 @@ Panel {
           visible: root.view === "scope" && !root.editingLocation && root.selAc !== null
           radius: Style.cornerRadius
           color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.05)
+          clip: true
           implicitHeight: idCard.implicitHeight + Style.space(20)
 
           Column {
@@ -942,6 +943,7 @@ Panel {
             Text {
               visible: idCard.a.unusual === true
               width: parent.width
+              wrapMode: Text.WordWrap
               text: "⚠  unusual — " + (idCard.a.id ? idCard.a.id.unusualWhy : "")
               color: Color.urgent
               font.family: root.ff
@@ -963,6 +965,7 @@ Panel {
 
             Text {
               width: parent.width
+              wrapMode: Text.WordWrap
               text: {
                 var a = idCard.a, parts = []
                 if (a.reg) parts.push("reg " + a.reg)
@@ -970,7 +973,7 @@ Panel {
                 parts.push(Model.fmtAlt(a.altFt, a.onGround))
                 if (typeof a.distKm === "number" && isFinite(a.distKm))
                   parts.push(Model.fmtDist(a.distKm, root.units) + " " + (a.compass || ""))
-                return parts.join("   ·   ")
+                return parts.join("  ·  ")
               }
               color: Qt.darker(root.fg, 1.4)
               font.family: root.ff
@@ -980,6 +983,7 @@ Panel {
 
             Text {
               width: parent.width
+              wrapMode: Text.WordWrap
               visible: text !== ""
               text: idCard.dexEntry
                 ? ("✦ in your logbook · seen " + idCard.dexEntry.n + "× · first "
@@ -1014,6 +1018,7 @@ Panel {
             Text {
               visible: !!(idCard.enr && idCard.enr.route)
               width: parent.width
+              wrapMode: Text.WordWrap
               text: idCard.enr && idCard.enr.route
                 ? (idCard.enr.route.oIata + "  →  " + idCard.enr.route.dIata
                    + "   " + idCard.enr.route.oName + " → " + idCard.enr.route.dName)
@@ -1021,7 +1026,6 @@ Panel {
               color: root.fg
               font.family: root.ff
               font.pixelSize: Style.font.bodySmall
-              elide: Text.ElideRight
               textFormat: Text.PlainText
             }
 
@@ -1045,6 +1049,7 @@ Panel {
               }
               Text {
                 width: parent.width
+                wrapMode: Text.WordWrap
                 text: {
                   if (!idCard.prog) return ""
                   var pct = Math.round(idCard.prog.frac * 100)
@@ -1052,7 +1057,7 @@ Panel {
                   var lbl = idCard.prog.phase === "departed" ? "just departed"
                           : idCard.prog.phase === "arriving" ? "arriving"
                           : pct + "% of the way"
-                  return lbl + (eta ? "   ·   " + eta + " to landing" : "")
+                  return lbl + (eta ? "  ·  " + eta + " to landing" : "")
                 }
                 color: Qt.darker(root.fg, 1.4)
                 font.family: root.ff
