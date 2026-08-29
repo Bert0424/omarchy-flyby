@@ -27,7 +27,9 @@
       "notifyDiscovery": true,
       "showGround": false,
       "readablePill": false,
-      "altColor": false
+      "altColor": false,
+      "routeLookup": true,
+      "showPhotos": false
     },
     "schema": [
       { "key": "latitude", "type": "string", "label": "Latitude", "description": "Decimal degrees, e.g. 29.4241. Leave blank and use “Locate me” in the popup." },
@@ -39,7 +41,9 @@
       { "key": "notifyDiscovery", "type": "boolean", "label": "Notify when a new aircraft type is logged", "defaultValue": true },
       { "key": "showGround", "type": "boolean", "label": "Include aircraft on the ground", "defaultValue": false },
       { "key": "readablePill", "type": "boolean", "label": "Bar pill shows aircraft type instead of callsign", "defaultValue": false },
-      { "key": "altColor", "type": "boolean", "label": "Colour radar blips by altitude", "defaultValue": false }
+      { "key": "altColor", "type": "boolean", "label": "Colour radar blips by altitude", "defaultValue": false },
+      { "key": "routeLookup", "type": "boolean", "label": "Look up route & owner for the selected aircraft (adsbdb.com)", "defaultValue": true },
+      { "key": "showPhotos", "type": "boolean", "label": "Show a photo of the selected airframe (loads from airport-data.com)", "defaultValue": false }
     ]
   }
 }

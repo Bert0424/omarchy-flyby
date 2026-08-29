@@ -47,6 +47,8 @@ Panel {
   readonly property bool showGround:      boolVal("showGround", false)
   readonly property bool readablePill:    boolVal("readablePill", false)
   readonly property bool altColor:        boolVal("altColor", false)
+  readonly property bool routeLookup:     boolVal("routeLookup", true)
+  readonly property bool showPhotos:      boolVal("showPhotos", false)
 
   // ---- state ----------------------------------------------------------
   property var aircraft: []
@@ -80,6 +82,46 @@ Panel {
       if (root.aircraft[i].hex === h) return root.aircraft[i]
     return null
   }
+
+  // ---- Phase B enrichment (adsbdb route + owner + photo), click-only.
+  // hex -> parsed enrichment object, or "miss". In-memory for the session;
+  // route/owner are effectively static so one lookup per airframe is plenty.
+  property var _enrichCache: ({})
+  property bool enriching: false
+  readonly property var selEnrich: {
+    var h = root.selectedHex, c = h ? root._enrichCache[h] : null
+    return (c && c !== "miss") ? c : null
+  }
+  onSelectedHexChanged: {
+    root.enriching = false
+    if (root.selectedHex && root.routeLookup && !root._enrichCache[root.selectedHex])
+      enrichDebounce.restart()
+    else
+      enrichDebounce.stop()
+  }
+
+  function maybeEnrich() {
+    var h = root.selectedHex
+    if (!h || !root.routeLookup || root._enrichCache[h] || enrichProc.running) return
+    var a = root.selAc
+    if (!a) return
+    var cs = String(a.callsign || "").replace(/[^A-Za-z0-9]/g, "")
+    var hex = String(h).replace(/[^A-Fa-f0-9]/g, "")
+    if (!hex) return
+    // Full URLs built here and passed as args — the script never interpolates
+    // them, and both hosts are fixed. A missing callsign just skips the route.
+    var routeUrl = cs ? "https://api.adsbdb.com/v0/callsign/" + cs : "https://api.adsbdb.com/v0/"
+    var acUrl = "https://api.adsbdb.com/v0/aircraft/" + hex
+    root.enriching = true
+    root._enrichHex = h
+    enrichProc.command = ["bash", "-c",
+      'a=$(timeout 6 curl -sS --max-time 5 -A "$3" -- "$1" | head -c 20000); '
+      + 'b=$(timeout 6 curl -sS --max-time 5 -A "$3" -- "$2" | head -c 20000); '
+      + 'printf \'{"route":%s,"ac":%s}\' "${a:-null}" "${b:-null}"',
+      "flyby", routeUrl, acUrl, root.userAgent]
+    enrichProc.running = true
+  }
+  property string _enrichHex: ""
 
   // Type codes for the Logbook grid: discovered first (most-seen first),
   // then the rest alphabetically. Recomputes when `dex` is reassigned.
@@ -339,6 +381,34 @@ Panel {
     }
     onExited: function (code) {
       if (code !== 0) { root.locating = false; root.lastError = "Locate failed (no network?)" }
+    }
+  }
+
+  // Debounce so cycling the selection with N doesn't fire a burst of lookups.
+  Timer { id: enrichDebounce; interval: 350; onTriggered: root.maybeEnrich() }
+
+  Process {
+    id: enrichProc
+    stdout: StdioCollector {
+      id: enrichOut
+      waitForEnd: true
+      onStreamFinished: {
+        var h = root._enrichHex
+        root.enriching = false
+        if (!h) return
+        var parsed
+        try { parsed = Model.parseEnrichment(enrichOut.text) } catch (e) { parsed = null }
+        var next = ({})
+        for (var k in root._enrichCache) next[k] = root._enrichCache[k]
+        next[h] = (parsed && (parsed.route || parsed.owner || parsed.acType)) ? parsed : "miss"
+        // keep the cache from growing without bound over a long session
+        var keys = Object.keys(next)
+        if (keys.length > 120) delete next[keys[0]]
+        root._enrichCache = next
+      }
+    }
+    onExited: function (code) {
+      if (code !== 0) root.enriching = false
     }
   }
 
@@ -698,14 +768,17 @@ Panel {
           font.italic: true
         }
 
-        // ---- aircraft list (nearest 8)
+        // ---- aircraft list (nearest 8; collapses to 3 while a card is open)
         Column {
+          id: acList
           width: parent.width
           spacing: Style.space(2)
           visible: root.hasLocation && !root.editingLocation && root.view === "scope" && root.count > 0
 
+          readonly property int shown: root.selAc ? 3 : 8
+
           Repeater {
-            model: root.aircraft.slice(0, 8)
+            model: root.aircraft.slice(0, acList.shown)
 
             Rectangle {
               id: rowRect
@@ -786,11 +859,11 @@ Panel {
           }
 
           Text {
-            visible: root.count > 8
+            visible: root.count > acList.shown
             width: parent.width
             horizontalAlignment: Text.AlignHCenter
             topPadding: Style.space(4)
-            text: "+ " + (root.count - 8) + " more in range"
+            text: "+ " + (root.count - acList.shown) + " more in range"
             color: Qt.darker(root.fg, 1.6)
             font.family: root.ff
             font.pixelSize: Style.font.caption
@@ -817,6 +890,9 @@ Panel {
             readonly property var info: (a.id && a.id.specs) ? a.id.specs : null
             readonly property var dexEntry:
                 (a.id && a.id.typeCode && root.dex.types) ? root.dex.types[a.id.typeCode] : null
+            readonly property var enr: root.selEnrich
+            readonly property var prog: (enr && enr.route)
+              ? Model.routeProgress(enr.route, a.lat, a.lon, a.gsKt) : null
 
             Row {
               width: parent.width
@@ -910,6 +986,109 @@ Panel {
                    + root.shortDate(idCard.dexEntry.first))
                 : (idCard.a.id && idCard.a.id.known ? "not in your logbook yet" : "")
               color: idCard.dexEntry ? Color.accent : Qt.darker(root.fg, 1.6)
+              font.family: root.ff
+              font.pixelSize: Style.font.caption
+              textFormat: Text.PlainText
+            }
+
+            // ---- Phase B: route / owner / photo, once the lookup returns
+            Rectangle {
+              width: parent.width
+              height: Style.spacing.hairline
+              color: root.fg
+              opacity: 0.12
+              visible: root.routeLookup && (root.enriching || idCard.enr !== null)
+            }
+
+            Text {
+              visible: root.enriching && idCard.enr === null
+              text: "looking up route…"
+              color: Qt.darker(root.fg, 1.6)
+              font.family: root.ff
+              font.pixelSize: Style.font.caption
+              font.italic: true
+              textFormat: Text.PlainText
+            }
+
+            // route: SFO → EWR + place names
+            Text {
+              visible: !!(idCard.enr && idCard.enr.route)
+              width: parent.width
+              text: idCard.enr && idCard.enr.route
+                ? (idCard.enr.route.oIata + "  →  " + idCard.enr.route.dIata
+                   + "   " + idCard.enr.route.oName + " → " + idCard.enr.route.dName)
+                : ""
+              color: root.fg
+              font.family: root.ff
+              font.pixelSize: Style.font.bodySmall
+              elide: Text.ElideRight
+              textFormat: Text.PlainText
+            }
+
+            // progress bar + phase / ETA (only when the aircraft is plausibly
+            // on this route — see routeProgress `reliable`)
+            Column {
+              visible: idCard.prog !== null && idCard.prog.reliable
+              width: parent.width
+              spacing: Style.space(3)
+              Rectangle {
+                width: parent.width
+                height: Style.space(5)
+                radius: height / 2
+                color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.14)
+                Rectangle {
+                  height: parent.height
+                  radius: height / 2
+                  color: Color.accent
+                  width: Math.max(height, parent.width * (idCard.prog ? idCard.prog.frac : 0))
+                }
+              }
+              Text {
+                width: parent.width
+                text: {
+                  if (!idCard.prog) return ""
+                  var pct = Math.round(idCard.prog.frac * 100)
+                  var eta = Model.fmtEta(idCard.prog.etaMin)
+                  var lbl = idCard.prog.phase === "departed" ? "just departed"
+                          : idCard.prog.phase === "arriving" ? "arriving"
+                          : pct + "% of the way"
+                  return lbl + (eta ? "   ·   " + eta + " to landing" : "")
+                }
+                color: Qt.darker(root.fg, 1.4)
+                font.family: root.ff
+                font.pixelSize: Style.font.caption
+                textFormat: Text.PlainText
+              }
+            }
+
+            // registered owner (great for GA — whose plane is that)
+            Text {
+              visible: !!(idCard.enr && idCard.enr.owner)
+              width: parent.width
+              text: idCard.enr ? ("operated by " + idCard.enr.owner
+                   + (idCard.enr.ownerCountry ? " · " + idCard.enr.ownerCountry : "")) : ""
+              color: Qt.darker(root.fg, 1.4)
+              font.family: root.ff
+              font.pixelSize: Style.font.caption
+              elide: Text.ElideRight
+              textFormat: Text.PlainText
+            }
+
+            // photo of the airframe — opt-in; only ever from airport-data.com
+            Image {
+              visible: root.showPhotos && !!(idCard.enr && idCard.enr.photoThumb) && status === Image.Ready
+              width: parent.width
+              fillMode: Image.PreserveAspectFit
+              sourceSize.width: Math.round(parent.width)
+              asynchronous: true
+              cache: true
+              source: (root.showPhotos && idCard.enr && idCard.enr.photoThumb)
+                      ? idCard.enr.photoThumb : ""
+            }
+            Text {
+              visible: root.showPhotos && !!(idCard.enr && idCard.enr.photoThumb)
+              text: "photo: airport-data.com"
+              color: Qt.darker(root.fg, 1.9)
               font.family: root.ff
               font.pixelSize: Style.font.caption
               textFormat: Text.PlainText

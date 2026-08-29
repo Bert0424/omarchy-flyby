@@ -240,6 +240,70 @@ function specSummary(info) {
   return out.join("  ·  ")
 }
 
+// Parse the combined adsbdb envelope { route: <callsign resp>, ac: <aircraft resp> }
+// produced by the enrichment fetch. Everything optional; missing pieces just
+// come back empty. Photo URLs are host-allowlisted here so the identity card's
+// Image element can only ever load from airport-data.com.
+function parseEnrichment(rawText) {
+  var out = { route: null, owner: "", ownerCountry: "", acType: "", reg: "",
+              photoThumb: "", photoFull: "" }
+  var data
+  try { data = JSON.parse(String(rawText || "{}")) } catch (e) { return out }
+
+  var fr = data.route && data.route.response && data.route.response.flightroute
+  if (fr && fr.origin && fr.destination) {
+    var o = fr.origin, d = fr.destination
+    out.route = {
+      oIata: cleanStr(o.iata_code || o.icao_code || "", 5),
+      oName: cleanStr(o.municipality || o.name || "", 40),
+      oLat: num(o.latitude), oLon: num(o.longitude),
+      dIata: cleanStr(d.iata_code || d.icao_code || "", 5),
+      dName: cleanStr(d.municipality || d.name || "", 40),
+      dLat: num(d.latitude), dLon: num(d.longitude)
+    }
+  }
+  var ac = data.ac && data.ac.response && data.ac.response.aircraft
+  if (ac) {
+    out.owner = cleanStr(ac.registered_owner || "", 48)
+    out.ownerCountry = cleanStr(ac.registered_owner_country_iso_name || "", 4)
+    out.acType = cleanStr(ac.type || "", 40)
+    out.reg = cleanStr(ac.registration || "", 12)
+    var host = /^https:\/\/(image\.)?airport-data\.com\/[\w./-]+\.(jpg|jpeg|png)$/i
+    var pt = String(ac.url_photo_thumbnail || "")
+    var pf = String(ac.url_photo || "")
+    if (host.test(pt)) out.photoThumb = pt
+    if (host.test(pf)) out.photoFull = pf
+  }
+  return out
+}
+
+// Progress along a great-circle route. `r` is parseEnrichment().route.
+// Returns { frac 0..1, remainKm, etaMin (NaN if no usable speed), phase }.
+function routeProgress(r, curLat, curLon, gsKt) {
+  if (!r || !isNum(r.oLat) || !isNum(r.oLon) || !isNum(r.dLat) || !isNum(r.dLon)) return null
+  var total = haversineKm(r.oLat, r.oLon, r.dLat, r.dLon)
+  if (total < 1) return null
+  var flown = haversineKm(r.oLat, r.oLon, curLat, curLon)
+  var remain = haversineKm(curLat, curLon, r.dLat, r.dLon)
+  var denom = flown + remain
+  var frac = denom > 0 ? Math.max(0, Math.min(1, flown / denom)) : 0
+  // If flown+remain is much longer than the direct route, the aircraft isn't
+  // actually on this route (adsbdb keys on the flight number, which can be
+  // stale / a different leg) — keep the airports, drop the bogus progress.
+  var reliable = denom <= total * 1.35
+  var etaMin = (reliable && isNum(gsKt) && gsKt > 150)
+    ? Math.round((remain / 1.852) / gsKt * 60) : NaN
+  var phase = frac < 0.06 ? "departed" : frac > 0.93 ? "arriving" : "enroute"
+  return { total: total, remainKm: remain, frac: frac, etaMin: etaMin,
+           phase: phase, reliable: reliable }
+}
+
+function fmtEta(min) {
+  if (!isNum(min) || min < 0) return ""
+  if (min < 60) return "~" + min + "m"
+  return "~" + Math.floor(min / 60) + "h " + (min % 60) + "m"
+}
+
 // api URL for a provider. lat/lon already validated numeric by the caller;
 // radiusNm is one of the fixed manifest enum strings.
 function apiUrl(provider, lat, lon, radiusNm) {
@@ -286,6 +350,9 @@ if (typeof module !== "undefined") {
     detailLine: detailLine,
     identify: identify,
     specSummary: specSummary,
+    parseEnrichment: parseEnrichment,
+    routeProgress: routeProgress,
+    fmtEta: fmtEta,
     apiUrl: apiUrl,
     pillText: pillText
   }

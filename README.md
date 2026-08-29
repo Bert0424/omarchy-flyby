@@ -10,7 +10,10 @@ narrowbody, GA, helicopter, military…) and placed by real bearing and distance
 Click a blip — or press **N** — to pull up its **identity card**: the full type
 name, the operator decoded from the callsign, and a spec sheet (wingspan,
 weight, cruise, range, first-flight year) from bundled offline data. Unusual
-traffic — military, vintage, rare airframes — is flagged.
+traffic — military, vintage, rare airframes — is flagged. For a selected
+aircraft it also looks up the **route** (origin → destination airports, with a
+progress bar and rough ETA), the **registered owner**, and — if you turn it on —
+a **photo** of that airframe.
 
 Every type that crosses your range is added to the **Logbook** (press **L**, or
 the toggle up top). New types raise a one-line "✦ new in your logbook" note.
@@ -48,8 +51,10 @@ Then set your location (see below) and the scope fills in within a few seconds.
 | `○ flat / ◐ alt colour` | Colour radar blips by altitude (warm low → cool high). |
 | `pill: callsign / type` | Whether the bar pill shows the closest callsign or its aircraft type. |
 
-The new-type logbook note can be turned off in the widget's settings
-(`Notify when a new aircraft type is logged`).
+In the widget's settings you can also turn off the new-type logbook note
+(`Notify when a new aircraft type is logged`), turn off route/owner lookup
+entirely (`Look up route & owner for the selected aircraft`), or turn on
+airframe photos (`Show a photo of the selected airframe`, off by default).
 
 ## Setting your location
 
@@ -67,19 +72,33 @@ Flyby needs your latitude and longitude in decimal degrees.
 
 ## Data sources
 
-- **adsb.lol** — `https://api.adsb.lol/v2/point/{lat}/{lon}/{radius_nm}`
-- **adsb.fi** — `https://opendata.adsb.fi/api/v2/lat/{lat}/lon/{lon}/dist/{radius_nm}`
+- **adsb.lol** — `https://api.adsb.lol/v2/point/{lat}/{lon}/{radius_nm}` —
+  the live traffic feed, polled every 15 s.
+- **adsb.fi** — `https://opendata.adsb.fi/api/v2/lat/{lat}/lon/{lon}/dist/{radius_nm}` —
+  alternative live feed.
+- **adsbdb.com** — `https://api.adsbdb.com/v0/callsign/{cs}` and `/v0/aircraft/{hex}` —
+  route + registered owner for the **one aircraft you've selected**. Fired on
+  select, not on the poll, and cached for the session.
+- **airport-data.com** — airframe photo, only when `Show a photo…` is on, only
+  for the selected aircraft.
 
-Both are free, community-run ADS-B aggregators. No account, no API key. Please be
-a good citizen — the 15 s poll interval is deliberately gentle; don't crank it.
+All free, no account, no API key. Please be a good citizen — the poll interval
+is deliberately gentle; don't crank it.
 
 ## What it does to your system
 
-- **Network:** while enabled it makes one HTTPS GET every 15 seconds to the
-  selected data source (`api.adsb.lol` or `opendata.adsb.fi`), sending only your
-  configured latitude/longitude and range as part of the URL. If you press
-  "Locate me", it additionally makes one HTTPS GET to `https://ipapi.co/latlong/`.
-  Nothing else is sent anywhere.
+- **Network:**
+  - one HTTPS GET every 15 s to the selected feed (`api.adsb.lol` /
+    `opendata.adsb.fi`), sending only your latitude/longitude/range in the URL;
+  - when you **select an aircraft** and route lookup is on (default): two HTTPS
+    GETs to `api.adsbdb.com` — one for the callsign, one for the ICAO hex —
+    cached so each airframe is fetched at most once per session;
+  - when **airframe photos** are on (off by default): the selected aircraft's
+    thumbnail is loaded from `airport-data.com`. The URL is host-checked before
+    the image element ever sees it, so it can only load from that host;
+  - "Locate me" makes one HTTPS GET to `ipapi.co/latlong/`.
+  - Nothing else is sent anywhere; no query carries anything but coordinates,
+    a callsign, or an ICAO hex.
 - **No telemetry, no analytics, no accounts.**
 - **No privilege escalation.** Runs entirely as your user — no polkit, no
   system services.
@@ -91,8 +110,9 @@ a good citizen — the 15 s poll interval is deliberately gentle; don't crank it
   `~/.config/omarchy/shell.json` like every other bar widget.
 - **Bundled data:** `Data.js` — ~190 aircraft types and ~160 airline codes,
   static reference data compiled from public sources. Inert; no code runs from it.
-- **Processes:** `curl` (the fetches) and `omarchy-notification-send` (only for
-  the overhead / new-type notes, when you've enabled them).
+- **Processes:** `curl` (the fetches, each `timeout`-bounded and byte-capped)
+  and `omarchy-notification-send` (only for the overhead / new-type notes, when
+  you've enabled them).
 - Every string that comes back from the API is stripped of markup and control
   characters and length-clamped before it is displayed.
 
