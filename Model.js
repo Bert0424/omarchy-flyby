@@ -268,13 +268,18 @@ function parseEnrichment(rawText) {
     out.ownerCountry = cleanStr(ac.registered_owner_country_iso_name || "", 4)
     out.acType = cleanStr(ac.type || "", 40)
     out.reg = cleanStr(ac.registration || "", 12)
-    var host = /^https:\/\/(image\.)?airport-data\.com\/[\w./-]+\.(jpg|jpeg|png)$/i
-    var pt = String(ac.url_photo_thumbnail || "")
-    var pf = String(ac.url_photo || "")
-    if (host.test(pt)) out.photoThumb = pt
-    if (host.test(pf)) out.photoFull = pf
+    out.photoThumb = safePhotoUrl(ac.url_photo_thumbnail)
+    out.photoFull = safePhotoUrl(ac.url_photo)
   }
   return out
+}
+
+// A photo URL is only ever used if it is an https airport-data.com image.
+// Applied on the way in from the API and again when reading one back off the
+// Logbook file, so a hand-edited file can't repoint the <Image>.
+function safePhotoUrl(u) {
+  var s = String(u || "")
+  return /^https:\/\/(image\.)?airport-data\.com\/[\w./-]+\.(jpg|jpeg|png)$/i.test(s) ? s : ""
 }
 
 // Progress along a great-circle route. `r` is parseEnrichment().route.
@@ -351,6 +356,7 @@ if (typeof module !== "undefined") {
     identify: identify,
     specSummary: specSummary,
     parseEnrichment: parseEnrichment,
+    safePhotoUrl: safePhotoUrl,
     routeProgress: routeProgress,
     fmtEta: fmtEta,
     apiUrl: apiUrl,

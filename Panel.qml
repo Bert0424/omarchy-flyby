@@ -405,6 +405,22 @@ Panel {
         var keys = Object.keys(next)
         if (keys.length > 120) delete next[keys[0]]
         root._enrichCache = next
+
+        // Pin the first photo we ever get for a type onto its Logbook entry,
+        // so the Logbook card can show the actual airframe that earned it.
+        if (parsed && parsed.photoThumb) {
+          var a = null
+          for (var j = 0; j < root.aircraft.length; j++)
+            if (root.aircraft[j].hex === h) { a = root.aircraft[j]; break }
+          var code = a && a.id ? a.id.typeCode : ""
+          var d = root.dex
+          if (code && d.types && d.types[code] && !d.types[code].photo) {
+            d.types[code].photo = parsed.photoThumb
+            d.types[code].photoReg = (a.reg || parsed.reg || "")
+            root.dex = d
+            root.persistDex()
+          }
+        }
       }
     }
     onExited: function (code) {
@@ -1180,6 +1196,7 @@ Panel {
             visible: root.dexSelectedCode !== "" && Data.typeInfo(root.dexSelectedCode) !== null
             radius: Style.cornerRadius
             color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.05)
+            clip: true
             implicitHeight: dexCard.implicitHeight + Style.space(20)
             Column {
               id: dexCard
@@ -1190,6 +1207,9 @@ Panel {
               spacing: Style.space(3)
               readonly property var info: Data.typeInfo(root.dexSelectedCode)
               readonly property var e: root.dex.types ? root.dex.types[root.dexSelectedCode] : null
+              // photo pinned from the first airframe of this type we looked up,
+              // re-checked against the host allowlist on the way out of the file
+              readonly property string photo: Model.safePhotoUrl(e ? e.photo : "")
               Text {
                 width: parent.width
                 text: dexCard.info ? dexCard.info.n : ""
@@ -1211,6 +1231,7 @@ Panel {
               }
               Text {
                 width: parent.width
+                wrapMode: Text.WordWrap
                 visible: dexCard.e !== null && dexCard.e !== undefined
                 text: dexCard.e
                   ? ("✦ seen " + dexCard.e.n + "× · first " + root.shortDate(dexCard.e.first)
@@ -1220,6 +1241,57 @@ Panel {
                 font.family: root.ff
                 font.pixelSize: Style.font.caption
                 textFormat: Text.PlainText
+              }
+
+              // airframe photo — same opt-in as the identity card
+              Text {
+                visible: !root.showPhotos && dexCard.photo !== ""
+                width: parent.width
+                text: "＋ show airframe photo"
+                color: Color.accent
+                font.family: root.ff
+                font.pixelSize: Style.font.caption
+                textFormat: Text.PlainText
+                MouseArea {
+                  anchors.fill: parent
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.put("showPhotos", true)
+                }
+              }
+              Text {
+                visible: root.showPhotos && dexPhoto.status === Image.Loading
+                text: "loading photo…"
+                color: Qt.darker(root.fg, 1.6)
+                font.family: root.ff
+                font.pixelSize: Style.font.caption
+                font.italic: true
+                textFormat: Text.PlainText
+              }
+              Image {
+                id: dexPhoto
+                visible: root.showPhotos && status === Image.Ready
+                width: parent.width
+                fillMode: Image.PreserveAspectFit
+                sourceSize.width: Math.round(parent.width)
+                asynchronous: true
+                cache: true
+                source: root.showPhotos ? dexCard.photo : ""
+              }
+              Text {
+                visible: root.showPhotos && dexPhoto.status === Image.Ready
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: (dexCard.e && dexCard.e.photoReg ? dexCard.e.photoReg + "  ·  " : "")
+                      + "photo: airport-data.com  ·  tap to hide"
+                color: Qt.darker(root.fg, 1.9)
+                font.family: root.ff
+                font.pixelSize: Style.font.caption
+                textFormat: Text.PlainText
+                MouseArea {
+                  anchors.fill: parent
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.put("showPhotos", false)
+                }
               }
             }
           }

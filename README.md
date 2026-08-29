@@ -17,6 +17,9 @@ a **photo** of that airframe.
 
 Every type that crosses your range is added to the **Logbook** (press **L**, or
 the toggle up top). New types raise a one-line "✦ new in your logbook" note.
+Tap any logged type for its spec card — and once you've looked up an airframe of
+that type that had a photo, the card shows that plane (the one that earned you
+the entry).
 
 ![preview](preview.png)
 
@@ -103,10 +106,11 @@ is deliberately gentle; don't crank it.
 - **No privilege escalation.** Runs entirely as your user — no polkit, no
   system services.
 - **Files written:** exactly one of its own — `~/.local/state/omarchy/flyby-dex.json`,
-  the logbook (which types you've seen, counts, first/last dates, and a rolling
-  tail of the last 500 sightings). Written atomically and owner-only; the reader
-  refuses symlinks and caps its input. "Clear logbook" in the Logbook view wipes
-  it. Your coordinates / range / units / toggles are stored by Omarchy in
+  the logbook (which types you've seen, counts, first/last dates, a rolling tail
+  of the last 500 sightings, and for some types one `airport-data.com` photo URL
+  pinned from a lookup you did). Written atomically and owner-only; the reader
+  refuses symlinks and caps its input, and any stored photo URL is re-checked
+  against the host allowlist before it is used. "Clear logbook" wipes it. Your coordinates / range / units / toggles are stored by Omarchy in
   `~/.config/omarchy/shell.json` like every other bar widget.
 - **Bundled data:** `Data.js` — ~190 aircraft types and ~160 airline codes,
   static reference data compiled from public sources. Inert; no code runs from it.
