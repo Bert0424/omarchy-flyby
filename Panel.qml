@@ -1074,9 +1074,34 @@ Panel {
               textFormat: Text.PlainText
             }
 
-            // photo of the airframe — opt-in; only ever from airport-data.com
+            // photo of the airframe — opt-in (loads a remote image), and only
+            // ever from airport-data.com (URL host-checked in parseEnrichment).
+            Text {
+              visible: !root.showPhotos && !!(idCard.enr && idCard.enr.photoThumb)
+              width: parent.width
+              text: "＋ show airframe photo"
+              color: Color.accent
+              font.family: root.ff
+              font.pixelSize: Style.font.caption
+              textFormat: Text.PlainText
+              MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.put("showPhotos", true)
+              }
+            }
+            Text {
+              visible: root.showPhotos && flybyPhoto.status === Image.Loading
+              text: "loading photo…"
+              color: Qt.darker(root.fg, 1.6)
+              font.family: root.ff
+              font.pixelSize: Style.font.caption
+              font.italic: true
+              textFormat: Text.PlainText
+            }
             Image {
-              visible: root.showPhotos && !!(idCard.enr && idCard.enr.photoThumb) && status === Image.Ready
+              id: flybyPhoto
+              visible: root.showPhotos && status === Image.Ready
               width: parent.width
               fillMode: Image.PreserveAspectFit
               sourceSize.width: Math.round(parent.width)
@@ -1086,12 +1111,17 @@ Panel {
                       ? idCard.enr.photoThumb : ""
             }
             Text {
-              visible: root.showPhotos && !!(idCard.enr && idCard.enr.photoThumb)
-              text: "photo: airport-data.com"
+              visible: root.showPhotos && flybyPhoto.status === Image.Ready
+              text: "photo: airport-data.com  ·  tap to hide"
               color: Qt.darker(root.fg, 1.9)
               font.family: root.ff
               font.pixelSize: Style.font.caption
               textFormat: Text.PlainText
+              MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.put("showPhotos", false)
+              }
             }
           }
         }
