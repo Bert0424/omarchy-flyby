@@ -8,14 +8,18 @@ import qs.Commons
 Item {
   id: root
 
-  // Enriched + sorted aircraft from Model.enrich(): each needs
-  // { hex, callsign, bearing, distKm, trackDeg, onGround }.
+  // Enriched + sorted aircraft from Model.enrich(), each also carrying the
+  // identity fields Panel adds during ingest:
+  // { hex, callsign, bearing, distKm, trackDeg, onGround, altFt, cat, unusual }.
   property var aircraft: []
   property real maxKm: 46.3            // range ring maximum (25 nm default)
   property string units: "km"
   property string selectedHex: ""
   property color foreground: Color.foreground
   property color accent: Color.accent
+  property color urgent: Color.urgent
+  // Colour blips by altitude (warm low -> cool high) instead of flat accent.
+  property bool altColor: false
   // Animate only while the popup is open — a Canvas ticking at 30fps behind a
   // closed panel is wasted work.
   property bool running: true
@@ -35,6 +39,68 @@ Item {
     if (units === "mi") v = km * 0.621371
     else if (units === "nm") v = km * 0.539957
     return (v < 10 ? v.toFixed(1) : String(Math.round(v)))
+  }
+
+  // Relative glyph size per category (1.0 = a regional jet).
+  function _catScale(cat) {
+    switch (cat) {
+      case "widebody":   return 1.55
+      case "military":   return 1.35
+      case "narrowbody": return 1.15
+      case "vintage":    return 1.05
+      case "heli":       return 1.0
+      case "regional":   return 1.0
+      case "business":   return 0.9
+      case "turboprop":  return 0.92
+      case "piston":     return 0.7
+      default:           return 0.85
+    }
+  }
+
+  // Altitude -> hue: ~2 kft amber, ~18 kft green, ~38 kft blue.
+  function _altHue(ft) {
+    if (typeof ft !== "number" || !isFinite(ft)) return 150
+    var t = Math.max(0, Math.min(1, ft / 40000))
+    return 40 + t * 170        // 40 (amber) -> 210 (blue)
+  }
+
+  // A dart pointing "up" (nose at -y), drawn in the caller's transformed
+  // frame. Props get a rounder body, helis a rotor cross, vintage a ring.
+  function _glyph(ctx, cat, k) {
+    if (cat === "heli") {
+      ctx.lineWidth = 1.1
+      ctx.beginPath()
+      ctx.moveTo(-3.4 * k, 0); ctx.lineTo(3.4 * k, 0)
+      ctx.moveTo(0, -3.4 * k); ctx.lineTo(0, 3.4 * k)
+      ctx.stroke()
+      ctx.beginPath(); ctx.arc(0, 0, 1.3 * k, 0, Math.PI * 2); ctx.fill()
+      return
+    }
+    if (cat === "piston" || cat === "turboprop") {
+      ctx.beginPath(); ctx.arc(0, 0, 2.4 * k, 0, Math.PI * 2); ctx.fill()
+      return
+    }
+    if (cat === "vintage") {
+      ctx.lineWidth = 1.2
+      ctx.beginPath(); ctx.arc(0, 0, 2.6 * k, 0, Math.PI * 2); ctx.stroke()
+      return
+    }
+    // jet dart (narrowbody / widebody / regional / business / military)
+    ctx.beginPath()
+    ctx.moveTo(0, -3.6 * k)
+    ctx.lineTo(2.6 * k, 2.6 * k)
+    ctx.lineTo(0, 1.4 * k)
+    ctx.lineTo(-2.6 * k, 2.6 * k)
+    ctx.closePath()
+    ctx.fill()
+    if (cat === "military") {          // little tailplane to set them apart
+      ctx.beginPath()
+      ctx.moveTo(-1.6 * k, 2.9 * k)
+      ctx.lineTo(1.6 * k, 2.9 * k)
+      ctx.lineTo(0, 4.1 * k)
+      ctx.closePath()
+      ctx.fill()
+    }
   }
 
   Timer {
@@ -159,35 +225,39 @@ Item {
         var age = now - (root._lit[a.hex] || 0)
         var glow = age > 2600 ? 0.30 : (1 - 0.70 * (age / 2600))
         var sel = a.hex && a.hex === root.selectedHex
+        var alpha = a.onGround ? 0.4 * Math.max(glow, 0.5)
+                              : Math.max(glow, sel ? 0.95 : 0.32)
+        var hasTrack = typeof a.trackDeg === "number" && isFinite(a.trackDeg)
 
-        // heading tick
-        if (typeof a.trackDeg === "number" && isFinite(a.trackDeg)) {
-          var tp = pol(bp.x, bp.y, 7, a.trackDeg)
-          ctx.beginPath()
-          ctx.moveTo(bp.x, bp.y); ctx.lineTo(tp.x, tp.y)
-          ctx.strokeStyle = Qt.rgba(ac.r, ac.g, ac.b, 0.5 * glow)
-          ctx.lineWidth = 1
-          ctx.stroke()
-        }
+        // fill colour: unusual -> urgent, altColor -> hue by altitude,
+        // on-ground -> dim foreground, else theme accent.
+        var col
+        if (a.onGround)      col = Qt.rgba(fg.r, fg.g, fg.b, alpha)
+        else if (a.unusual)  col = Qt.rgba(root.urgent.r, root.urgent.g, root.urgent.b, Math.max(alpha, 0.6))
+        else if (root.altColor) col = Qt.hsla(root._altHue(a.altFt) / 360, 0.6, 0.62, alpha)
+        else                 col = Qt.rgba(ac.r, ac.g, ac.b, alpha)
 
-        ctx.beginPath()
-        ctx.arc(bp.x, bp.y, sel ? 3.6 : 2.6, 0, Math.PI * 2)
-        ctx.fillStyle = a.onGround
-          ? Qt.rgba(fg.r, fg.g, fg.b, 0.35 * Math.max(glow, 0.5))
-          : Qt.rgba(ac.r, ac.g, ac.b, Math.max(glow, sel ? 0.9 : 0.3))
-        ctx.fill()
+        var k = root._catScale(a.cat) * (sel ? 1.25 : 1.0)
+
+        ctx.save()
+        ctx.translate(bp.x, bp.y)
+        if (hasTrack) ctx.rotate(a.trackDeg * Math.PI / 180)
+        ctx.fillStyle = col
+        ctx.strokeStyle = col
+        root._glyph(ctx, a.cat || "unknown", k)
+        ctx.restore()
 
         if (sel) {
           ctx.beginPath()
-          ctx.arc(bp.x, bp.y, 8, 0, Math.PI * 2)
+          ctx.arc(bp.x, bp.y, 9, 0, Math.PI * 2)
           ctx.strokeStyle = Qt.rgba(ac.r, ac.g, ac.b, 0.9)
           ctx.lineWidth = 1
           ctx.stroke()
-          ctx.fillStyle = Qt.rgba(fg.r, fg.g, fg.b, 0.9)
+          ctx.fillStyle = Qt.rgba(fg.r, fg.g, fg.b, 0.95)
           ctx.font = "bold 10px sans-serif"
           ctx.textAlign = "center"
           ctx.textBaseline = "bottom"
-          ctx.fillText(a.callsign || "", bp.x, bp.y - 10)
+          ctx.fillText(a.callsign || "", bp.x, bp.y - 12)
         }
       }
 

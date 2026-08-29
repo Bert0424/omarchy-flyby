@@ -1,11 +1,19 @@
 # Flyby
 
 A bar widget that shows the aircraft flying over you on a live **radar scope**,
-built from free community ADS-B data. Click the pill to open the scope: a
-sweeping radar with range rings, a blip per aircraft placed by bearing and
-distance, and a list of the nearest contacts with altitude, speed, climb/descent
-and heading. The pill shows how many aircraft are in range, or the closest
-callsign (with a pulsing dot) when one is passing directly overhead.
+built from free community ADS-B data — and quietly keeps a **logbook** of every
+aircraft type you've spotted.
+
+Click the pill to open the scope: a sweeping radar with range rings and a blip
+per aircraft, each drawn as a little silhouette for its class (widebody,
+narrowbody, GA, helicopter, military…) and placed by real bearing and distance.
+Click a blip — or press **N** — to pull up its **identity card**: the full type
+name, the operator decoded from the callsign, and a spec sheet (wingspan,
+weight, cruise, range, first-flight year) from bundled offline data. Unusual
+traffic — military, vintage, rare airframes — is flagged.
+
+Every type that crosses your range is added to the **Logbook** (press **L**, or
+the toggle up top). New types raise a one-line "✦ new in your logbook" note.
 
 ![preview](preview.png)
 
@@ -20,10 +28,11 @@ Then set your location (see below) and the scope fills in within a few seconds.
 
 ## Using it
 
-- **Left click** the pill — open / close the radar scope.
+- **Left click** the pill — open / close the popup.
 - **Middle click** the pill — force an immediate refresh.
-- **Click a blip** (or a row in the list) — select that aircraft; it gets a
-  ring and its callsign on the scope.
+- **Click a blip** (or a list row) — select it and open its identity card.
+- **Keys** (while the popup has focus): **L** toggles Scope / Logbook,
+  **N** cycles the selection through the contacts nearest-first, **Esc** closes.
 - The scope polls every 15 seconds while the shell is running.
 
 ### Footer controls (in the popup)
@@ -33,9 +42,14 @@ Then set your location (see below) and the scope fills in within a few seconds.
 | `📍 lat, lon` | Reopen the location form to fine-tune or re-enter your coordinates. |
 | `5nm … 100nm` | Range of the scope (the outer ring). |
 | `km` | Cycle distance units: km → mi → nm. |
-| `🔕 / 🔔` | Toggle a desktop notification when a new aircraft enters the overhead zone (within 3 km, airborne). |
-| `air only / 🛬 ground` | Include or hide aircraft that are on the ground (parked, taxiing, tower, service vehicles). Off by default. |
+| `🔕 / 🔔` | Notify when a new aircraft enters the overhead zone (within 3 km, airborne). |
+| `air only / 🛬 ground` | Include or hide aircraft on the ground. Off by default. |
 | `adsb.lol / adsb.fi` | Which community feed to query. |
+| `○ flat / ◐ alt colour` | Colour radar blips by altitude (warm low → cool high). |
+| `pill: callsign / type` | Whether the bar pill shows the closest callsign or its aircraft type. |
+
+The new-type logbook note can be turned off in the widget's settings
+(`Notify when a new aircraft type is logged`).
 
 ## Setting your location
 
@@ -68,12 +82,17 @@ a good citizen — the 15 s poll interval is deliberately gentle; don't crank it
   Nothing else is sent anywhere.
 - **No telemetry, no analytics, no accounts.**
 - **No privilege escalation.** Runs entirely as your user — no polkit, no
-  system services, no writes outside your own config.
-- **Files written:** none of its own. Your latitude/longitude/range/units and the
-  toggle states are stored by Omarchy in `~/.config/omarchy/shell.json` alongside
-  every other bar-widget setting.
-- **Processes:** `curl` (for the fetches) and `omarchy-notification-send` (only
-  when the overhead notification is enabled and a plane passes over).
+  system services.
+- **Files written:** exactly one of its own — `~/.local/state/omarchy/flyby-dex.json`,
+  the logbook (which types you've seen, counts, first/last dates, and a rolling
+  tail of the last 500 sightings). Written atomically and owner-only; the reader
+  refuses symlinks and caps its input. "Clear logbook" in the Logbook view wipes
+  it. Your coordinates / range / units / toggles are stored by Omarchy in
+  `~/.config/omarchy/shell.json` like every other bar widget.
+- **Bundled data:** `Data.js` — ~190 aircraft types and ~160 airline codes,
+  static reference data compiled from public sources. Inert; no code runs from it.
+- **Processes:** `curl` (the fetches) and `omarchy-notification-send` (only for
+  the overhead / new-type notes, when you've enabled them).
 - Every string that comes back from the API is stripped of markup and control
   characters and length-clamped before it is displayed.
 
@@ -84,7 +103,8 @@ omarchy plugin disable bert.flyby   # or: omarchy plugin remove bert.flyby
 ```
 
 It keeps nothing running in the background beyond the poll timer, which stops
-with the widget.
+with the widget. The logbook file is left in place; delete
+`~/.local/state/omarchy/flyby-dex.json` yourself if you want it gone.
 
 ## Credits
 

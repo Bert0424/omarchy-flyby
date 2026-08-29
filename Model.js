@@ -95,6 +95,7 @@ function parseAircraft(rawText) {
       trackDeg: track,
       vrFpm: vr,
       squawk: cleanStr(a.squawk || "", 6),
+      dbFlags: num(a.dbFlags),
       lat: lat,
       lon: lon
     })
@@ -178,6 +179,67 @@ function detailLine(a, unit) {
   return parts.join("  ·  ")
 }
 
+// Full identity for one aircraft: the live contact joined to the bundled
+// reference data. `D` is the Data.js module (passed in so Model.js stays a
+// pure, node-testable library with no import of its own).
+function identify(D, a) {
+  var code = String(a.type || "").toUpperCase().trim()
+  var info = D.typeInfo(code)
+  var cs = D.parseCallsign(a.callsign)
+
+  var unusual = false, why = ""
+  if (info && info.c === "military")      { unusual = true; why = "military" }
+  else if (info && info.c === "vintage")  { unusual = true; why = "vintage" }
+  else if (info && info.r === "exotic")   { unusual = true; why = "rare type" }
+  // adsb.fi ships a dbFlags bitfield: 1=military 2=interesting 4=PIA 8=LADD
+  if (isNum(a.dbFlags)) {
+    if (a.dbFlags & 1)      { unusual = true; why = "military" }
+    else if (a.dbFlags & 2) { unusual = true; why = "flagged interesting" }
+  }
+  if (cs.airline && /^(reach|convoy)$/i.test(cs.airline.callsign || "")) {
+    unusual = true; why = "military airlift"
+  }
+
+  return {
+    typeCode: code,
+    known: !!info,
+    typeName: D.typeName(code),
+    typeShort: info ? info.s : (code || "?"),
+    manufacturer: info ? info.m : "",
+    category: info ? info.c : "unknown",
+    rarity: info ? info.r : "unclassified",
+    specs: info || null,
+    airlineName: cs.airline ? cs.airline.name : "",
+    radioCallsign: cs.airline ? cs.airline.callsign : "",
+    country: cs.airline ? cs.airline.country : "",
+    flightNo: cs.flightNo || "",
+    operatorDisplay: cs.display || "",
+    isRegistration: !!cs.isRegistration,
+    unusual: unusual,
+    unusualWhy: why
+  }
+}
+
+// One-line spec summary for the identity card, e.g.
+// "twin jet · 35.8 m span · 189 seats · cruise 453 kt · range 5,440 km · 1997"
+function specSummary(info) {
+  if (!info) return ""
+  var out = []
+  var engWord = info.eng === 1 ? "single" : info.eng === 2 ? "twin"
+              : info.eng === 3 ? "tri" : info.eng === 4 ? "quad" : (info.eng + "×")
+  out.push(engWord + " " + String(info.et || "").toLowerCase())
+  if (isNum(info.ws)) out.push(info.ws + " m span")
+  if (isNum(info.ln)) out.push(info.ln + " m long")
+  if (isNum(info.mtow)) out.push(info.mtow + " t MTOW")
+  if (isNum(info.pax) && info.pax > 0) out.push(info.pax + " seats")
+  if (isNum(info.crz)) out.push("cruise " + info.crz + " kt")
+  if (isNum(info.rng)) out.push("range " + (info.rng >= 1000
+      ? String(Math.round(info.rng)).replace(/\B(?=(\d{3})+(?!\d))/g, ",")
+      : info.rng) + " km")
+  if (isNum(info.yr)) out.push("first flew " + info.yr)
+  return out.join("  ·  ")
+}
+
 // api URL for a provider. lat/lon already validated numeric by the caller;
 // radiusNm is one of the fixed manifest enum strings.
 function apiUrl(provider, lat, lon, radiusNm) {
@@ -189,11 +251,19 @@ function apiUrl(provider, lat, lon, radiusNm) {
   return "https://api.adsb.lol/v2/point/" + la + "/" + lo + "/" + r   // default
 }
 
-// Bar pill text. hasLocation false => prompt; overhead => closest callsign;
-// else the count within range.
-function pillText(hasLocation, aircraft, overheadList) {
+// Bar pill text. hasLocation false => prompt; overhead => closest aircraft;
+// else the count within range. Pass the Data.js module as `readableData` to
+// get "✈ 737 ↑" (type + climb) instead of "✈ SWA2412" (raw callsign).
+function pillText(hasLocation, aircraft, overheadList, readableData) {
   if (!hasLocation) return "✈ set location"
-  if (overheadList && overheadList.length) return "✈ " + overheadList[0].callsign
+  if (overheadList && overheadList.length) {
+    var a = overheadList[0]
+    if (readableData) {
+      var t = trend(a.vrFpm)
+      return "✈ " + readableData.typeShort(a.type) + (t && t !== "·" ? " " + t : "")
+    }
+    return "✈ " + a.callsign
+  }
   var n = aircraft ? aircraft.length : 0
   return n > 0 ? "✈ " + n : "✈"
 }
@@ -214,6 +284,8 @@ if (typeof module !== "undefined") {
     fmtAlt: fmtAlt,
     trend: trend,
     detailLine: detailLine,
+    identify: identify,
+    specSummary: specSummary,
     apiUrl: apiUrl,
     pillText: pillText
   }

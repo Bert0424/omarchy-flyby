@@ -4,6 +4,7 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 import "Model.js" as Model
+import "Data.js" as Data
 
 // Lifecycle + data + UI for the Flyby radar popup. Mirrors the standard
 // bar-widget popup shape (Panel base -> KeyboardPanel -> PanelKeyCatcher),
@@ -37,10 +38,15 @@ Panel {
   readonly property real radiusKm: radiusNm * 1.852
   readonly property string provider: val("provider", "adsb.lol")
   readonly property string units: val("units", "km")
-  readonly property bool notifyOverhead: val("notifyOverhead", false) === true
-                                      || val("notifyOverhead", false) === "true"
-  readonly property bool showGround: val("showGround", false) === true
-                                  || val("showGround", false) === "true"
+  function boolVal(k, dflt) {
+    var v = val(k, dflt)
+    return v === true || v === "true"
+  }
+  readonly property bool notifyOverhead:  boolVal("notifyOverhead", false)
+  readonly property bool notifyDiscovery: boolVal("notifyDiscovery", true)
+  readonly property bool showGround:      boolVal("showGround", false)
+  readonly property bool readablePill:    boolVal("readablePill", false)
+  readonly property bool altColor:        boolVal("altColor", false)
 
   // ---- state ----------------------------------------------------------
   property var aircraft: []
@@ -51,11 +57,53 @@ Panel {
   property bool editingLocation: false
   property var _prevOverhead: ({})
 
+  // "scope" | "dex"
+  property string view: "scope"
+  property string dexSelectedCode: ""
+
+  // Dex model: { v:1, types: { CODE: {n,first,last,firstCs} }, log: [ ... ] }
+  property var dex: ({ v: 1, types: ({}), log: [] })
+  property bool dexLoaded: false
+  // hex codes confirmed present on the previous poll — a type only counts
+  // toward the Dex once we've seen the same airframe twice running, so a
+  // single garbled type field can't mint a phantom entry.
+  property var _prevHexes: ({})
+  property int dexDiscoveredCount: 0
+  property int dexRareCount: 0
+  property int dexExoticCount: 0
+
+  // The aircraft the identity card is showing, resolved from selectedHex.
+  readonly property var selAc: {
+    var h = root.selectedHex
+    if (!h) return null
+    for (var i = 0; i < root.aircraft.length; i++)
+      if (root.aircraft[i].hex === h) return root.aircraft[i]
+    return null
+  }
+
+  // Type codes for the Logbook grid: discovered first (most-seen first),
+  // then the rest alphabetically. Recomputes when `dex` is reassigned.
+  readonly property var dexGridModel: {
+    var codes = Data.allTypeCodes()
+    var t = root.dex.types || {}
+    codes.sort(function (a, b) {
+      var da = t[a] ? 1 : 0, db = t[b] ? 1 : 0
+      if (da !== db) return db - da
+      if (da) return (t[b].n || 0) - (t[a].n || 0)
+      return a < b ? -1 : 1
+    })
+    return codes
+  }
+
   readonly property int count: aircraft.length
   readonly property bool overhead: overheadList.length > 0
-  readonly property string label: Model.pillText(root.hasLocation, root.aircraft, root.overheadList)
+  readonly property string label: Model.pillText(root.hasLocation, root.aircraft,
+                                                 root.overheadList,
+                                                 root.readablePill ? Data : null)
 
-  readonly property string userAgent: "omarchy-flyby/0.1 (Omarchy plugin; +https://omarchyplugins.com)"
+  readonly property int dexUniverse: Data.typeUniverseCount()
+
+  readonly property string userAgent: "omarchy-flyby/0.2 (Omarchy plugin; +https://omarchyplugins.com)"
 
   // ---- lifecycle ----------------------------------------------------
   function open() { root.controller.show(); root.refresh(); Qt.callLater(root.syncLocationFields) }
@@ -97,11 +145,101 @@ Panel {
     Model.enrich(list, root.originLat, root.originLon)
     // Keep the list bounded no matter how busy the sky is.
     if (list.length > 60) list = list.slice(0, 60)
+
+    // Attach identity (type name, category, rarity, operator, "unusual" flag)
+    // so the radar, list and card can all read it off the aircraft object.
+    for (var i = 0; i < list.length; i++) {
+      var id = Model.identify(Data, list[i])
+      list[i].id = id
+      list[i].cat = id.category
+      list[i].unusual = id.unusual
+    }
+
     root.lastError = ""
     root.aircraft = list
     var ov = Model.overhead(list)
     root.overheadList = ov
     root.maybeNotify(ov)
+    root.updateDex(list)
+  }
+
+  // Fold this poll into the Dex. A type is only recorded once the same
+  // airframe (hex) has been seen on two consecutive polls — cheap guard
+  // against a corrupt `t` field creating a bogus collectible.
+  function updateDex(list) {
+    if (!root.dexLoaded) return
+    var seenNow = ({})
+    var d = root.dex
+    var types = d.types || (d.types = {})
+    var log = d.log || (d.log = [])
+    var nowIso = new Date().toISOString()
+    var discovered = []
+    var changed = false
+
+    for (var i = 0; i < list.length; i++) {
+      var a = list[i]
+      if (!a.hex) continue
+      seenNow[a.hex] = true
+      var confirmed = root._prevHexes[a.hex] === true
+      if (!confirmed) continue
+
+      var code = a.id.typeCode
+      if (!code) continue
+      var known = a.id.known
+      var e = types[code]
+      if (!e) {
+        types[code] = { n: 1, first: nowIso, last: nowIso, firstCs: a.callsign || "" }
+        changed = true
+        if (known) discovered.push(code)     // only celebrate real, named types
+      } else {
+        e.n = (e.n || 0) + 1
+        e.last = nowIso
+        changed = true
+      }
+
+      log.push({
+        t: nowIso, code: code, cs: a.callsign || "", reg: a.reg || "",
+        hex: a.hex, alt: isFinite(a.altFt) ? Math.round(a.altFt) : null,
+        dist: isFinite(a.distKm) ? Math.round(a.distKm * 10) / 10 : null,
+        unusual: !!a.unusual
+      })
+    }
+    if (log.length > 500) d.log = log.slice(log.length - 500)
+
+    root._prevHexes = seenNow
+    if (changed) {
+      root.dex = d                     // reassign so bindings react
+      root.recountDex()
+      root.persistDex()
+    }
+    for (var k = 0; k < discovered.length; k++) root.announceDiscovery(discovered[k])
+  }
+
+  function recountDex() {
+    var n = 0, rare = 0, exotic = 0, t = root.dex.types || {}
+    for (var c in t) {
+      var info = Data.typeInfo(c)
+      if (!info) continue
+      n++
+      if (info.r === "rare") rare++
+      else if (info.r === "exotic") exotic++
+    }
+    root.dexDiscoveredCount = n
+    root.dexRareCount = rare
+    root.dexExoticCount = exotic
+  }
+
+  function announceDiscovery(code) {
+    var info = Data.typeInfo(code)
+    if (!info) return
+    var rar = info.r ? info.r.charAt(0).toUpperCase() + info.r.slice(1) : ""
+    if (root.notifyDiscovery) {
+      Quickshell.execDetached([
+        "omarchy-notification-send", "--app-name", "flyby", "-u", "normal",
+        "✦ New in your logbook: " + info.n,
+        rar + "  ·  " + root.dexDiscoveredCount + " of " + root.dexUniverse + " types logged"
+      ])
+    }
   }
 
   function maybeNotify(ov) {
@@ -215,6 +353,74 @@ Panel {
     onTriggered: root.refresh()
   }
 
+  // ---- Dex persistence ------------------------------------------------
+  // One file, ours alone: the logbook of every aircraft type we've seen.
+  // Written atomically (temp + rename) and owner-only; read through a
+  // wrapper that refuses symlinks / non-regular files and byte-caps the
+  // input — same shape as Dropdeck's state file, which passed review.
+  readonly property string _stateHome: Quickshell.env("XDG_STATE_HOME")
+      || ((Quickshell.env("HOME") || "") + "/.local/state")
+  readonly property string dexPath: _stateHome + "/omarchy/flyby-dex.json"
+  readonly property int maxDexBytes: 524288
+
+  function applyLoadedDex(text) {
+    var parsed = null
+    try { parsed = text ? JSON.parse(text) : null } catch (e) { parsed = null }
+    if (parsed && typeof parsed === "object") {
+      root.dex = {
+        v: 1,
+        types: (parsed.types && typeof parsed.types === "object") ? parsed.types : ({}),
+        log: Array.isArray(parsed.log) ? parsed.log.slice(-500) : []
+      }
+    }
+    root.dexLoaded = true
+    root.recountDex()
+  }
+
+  function persistDex() {
+    dexFile.setText(JSON.stringify(root.dex) + "\n")
+  }
+
+  function forgetDex() {
+    root.dex = { v: 1, types: ({}), log: [] }
+    root.dexSelectedCode = ""
+    root.recountDex()
+    root.persistDex()
+  }
+
+  function rarityColor(r) {
+    if (r === "exotic") return Color.urgent
+    if (r === "rare") return Color.accent
+    if (r === "uncommon") return Qt.darker(root.fg, 1.15)
+    return Qt.darker(root.fg, 1.7)          // common / unclassified
+  }
+  function shortDate(iso) {
+    var d = new Date(iso)
+    return isNaN(d.getTime()) ? "?" : Qt.formatDate(d, "d MMM")
+  }
+
+  Process {
+    id: dexReader
+    command: ["bash", "-c",
+      'p=$1; n=$2; [ -f "$p" ] && [ ! -L "$p" ] || exit 0; exec timeout 5 head -c "$n" -- "$p"',
+      "flyby", root.dexPath, String(root.maxDexBytes)]
+    running: true
+    stdout: StdioCollector { id: dexOut; waitForEnd: true }
+    onExited: function (code) {
+      var t = (code === 0) ? String(dexOut.text || "") : ""
+      root.applyLoadedDex(t.length >= root.maxDexBytes ? "" : t)
+    }
+  }
+
+  FileView {
+    id: dexFile
+    path: root.dexPath
+    preload: false
+    watchChanges: false
+    atomicWrites: true
+    printErrors: false
+  }
+
   onCfgChanged: Qt.callLater(root.refresh)   // range / provider / location edits
   onEditingLocationChanged: if (editingLocation) Qt.callLater(root.syncLocationFields)
 
@@ -247,12 +453,39 @@ Panel {
       onCloseRequested: root.close()
       onTabRequested: function (direction) { root.switchPanel(direction) }
 
+      // The Logbook grid and a long identity card can outgrow the panel's
+      // clamped height, so the whole body scrolls.
+      Flickable {
+        id: scroll
+        anchors.fill: parent
+        contentWidth: width
+        contentHeight: col.implicitHeight + Style.space(36)
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        interactive: contentHeight > height
+
+      // L toggles Scope / Logbook; N cycles the selection through the
+      // in-range contacts nearest-first (then clears).
+      Keys.onPressed: function (e) {
+        if (e.key === Qt.Key_L) {
+          root.view = root.view === "dex" ? "scope" : "dex"
+          e.accepted = true
+        } else if (e.key === Qt.Key_N && root.view === "scope") {
+          var list = root.aircraft
+          if (!list.length) { root.selectedHex = ""; e.accepted = true; return }
+          var idx = -1
+          for (var i = 0; i < list.length; i++)
+            if (list[i].hex === root.selectedHex) { idx = i; break }
+          root.selectedHex = (idx + 1 < list.length) ? list[idx + 1].hex : ""
+          e.accepted = true
+        }
+      }
+
       Column {
         id: col
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.top: parent.top
-        anchors.margins: Style.space(18)
+        x: Style.space(18)
+        y: Style.space(18)
+        width: scroll.width - Style.space(36)
         spacing: Style.space(12)
 
         // ---- header
@@ -295,20 +528,62 @@ Panel {
           }
         }
 
+        // ---- Scope / Logbook view toggle
+        Row {
+          width: parent.width
+          spacing: Style.space(6)
+          visible: root.hasLocation && !root.editingLocation
+
+          Repeater {
+            model: [
+              { key: "scope", label: "◎  Scope" },
+              { key: "dex",   label: "▤  Logbook  " + root.dexDiscoveredCount + " / " + root.dexUniverse }
+            ]
+            Rectangle {
+              required property var modelData
+              readonly property bool on: root.view === modelData.key
+              width: vtLabel.implicitWidth + Style.space(16)
+              height: vtLabel.implicitHeight + Style.space(9)
+              radius: Style.cornerRadius
+              color: on ? Style.selectedFillFor(root.fg, Color.accent)
+                   : vtArea.containsMouse ? Style.hoverFillFor(root.fg, Color.accent)
+                   : Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.05)
+              Text {
+                id: vtLabel
+                anchors.centerIn: parent
+                text: modelData.label
+                color: parent.on ? Color.accent : Qt.darker(root.fg, 1.35)
+                font.family: root.ff
+                font.pixelSize: Style.font.caption
+                font.bold: parent.on
+                textFormat: Text.PlainText
+              }
+              MouseArea {
+                id: vtArea
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.view = modelData.key
+              }
+            }
+          }
+        }
+
         // ---- radar
         Radar {
           id: radar
           anchors.horizontalCenter: parent.horizontalCenter
           width: Style.space(268)
           height: Style.space(268)
-          visible: root.hasLocation && !root.editingLocation
+          visible: root.hasLocation && !root.editingLocation && root.view === "scope"
           aircraft: root.aircraft
           maxKm: root.radiusKm
           units: root.units
           selectedHex: root.selectedHex
           foreground: root.fg
           accent: Color.accent
-          running: root.opened
+          altColor: root.altColor
+          running: root.opened && root.view === "scope"
           onBlipClicked: function (hex) {
             root.selectedHex = (hex && hex === root.selectedHex) ? "" : hex
           }
@@ -402,7 +677,7 @@ Panel {
         // ---- error line
         Text {
           width: parent.width
-          visible: root.hasLocation && !root.editingLocation && root.lastError !== ""
+          visible: root.hasLocation && !root.editingLocation && root.view === "scope" && root.lastError !== ""
           text: root.lastError
           color: Color.urgent
           font.family: root.ff
@@ -415,7 +690,7 @@ Panel {
         Text {
           width: parent.width
           horizontalAlignment: Text.AlignHCenter
-          visible: root.hasLocation && !root.editingLocation && root.lastError === "" && root.count === 0
+          visible: root.hasLocation && !root.editingLocation && root.view === "scope" && root.lastError === "" && root.count === 0
           text: "Nothing within " + Model.fmtDist(root.radiusKm, root.units) + " right now."
           color: Qt.darker(root.fg, 1.5)
           font.family: root.ff
@@ -427,7 +702,7 @@ Panel {
         Column {
           width: parent.width
           spacing: Style.space(2)
-          visible: root.hasLocation && !root.editingLocation && root.count > 0
+          visible: root.hasLocation && !root.editingLocation && root.view === "scope" && root.count > 0
 
           Repeater {
             model: root.aircraft.slice(0, 8)
@@ -519,6 +794,310 @@ Panel {
             color: Qt.darker(root.fg, 1.6)
             font.family: root.ff
             font.pixelSize: Style.font.caption
+          }
+        }
+
+        // ---- identity card (scope view, when a contact is selected)
+        Rectangle {
+          width: parent.width
+          visible: root.view === "scope" && !root.editingLocation && root.selAc !== null
+          radius: Style.cornerRadius
+          color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.05)
+          implicitHeight: idCard.implicitHeight + Style.space(20)
+
+          Column {
+            id: idCard
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.margins: Style.space(12)
+            spacing: Style.space(4)
+
+            readonly property var a: root.selAc || ({})
+            readonly property var info: (a.id && a.id.specs) ? a.id.specs : null
+            readonly property var dexEntry:
+                (a.id && a.id.typeCode && root.dex.types) ? root.dex.types[a.id.typeCode] : null
+
+            Row {
+              width: parent.width
+              spacing: Style.space(6)
+              Text {
+                width: parent.width - rarBadge.width - Style.space(6)
+                text: idCard.a.id ? idCard.a.id.typeName : "—"
+                color: root.fg
+                font.family: root.ff
+                font.pixelSize: Style.font.subtitle
+                font.bold: true
+                elide: Text.ElideRight
+                textFormat: Text.PlainText
+              }
+              Rectangle {
+                id: rarBadge
+                anchors.verticalCenter: parent.verticalCenter
+                visible: !!(idCard.a.id && idCard.a.id.known)
+                width: visible ? rbl.implicitWidth + Style.space(10) : 0
+                height: rbl.implicitHeight + Style.space(4)
+                radius: Style.cornerRadius
+                readonly property color rc: root.rarityColor(idCard.a.id ? idCard.a.id.rarity : "")
+                color: Qt.rgba(rc.r, rc.g, rc.b, 0.18)
+                Text {
+                  id: rbl
+                  anchors.centerIn: parent
+                  text: idCard.a.id ? idCard.a.id.rarity : ""
+                  color: rarBadge.rc
+                  font.family: root.ff
+                  font.pixelSize: Style.font.caption
+                  textFormat: Text.PlainText
+                }
+              }
+            }
+
+            Text {
+              width: parent.width
+              visible: text !== ""
+              text: idCard.a.id ? idCard.a.id.operatorDisplay : ""
+              color: Qt.darker(root.fg, 1.3)
+              font.family: root.ff
+              font.pixelSize: Style.font.bodySmall
+              elide: Text.ElideRight
+              textFormat: Text.PlainText
+            }
+
+            Text {
+              visible: idCard.a.unusual === true
+              width: parent.width
+              text: "⚠  unusual — " + (idCard.a.id ? idCard.a.id.unusualWhy : "")
+              color: Color.urgent
+              font.family: root.ff
+              font.pixelSize: Style.font.caption
+              textFormat: Text.PlainText
+            }
+
+            Text {
+              width: parent.width
+              wrapMode: Text.WordWrap
+              text: idCard.info
+                ? Model.specSummary(idCard.info)
+                : ("No spec sheet for this type yet — logged as " + (idCard.a.type || "unknown") + ".")
+              color: Qt.darker(root.fg, 1.5)
+              font.family: root.ff
+              font.pixelSize: Style.font.caption
+              textFormat: Text.PlainText
+            }
+
+            Text {
+              width: parent.width
+              text: {
+                var a = idCard.a, parts = []
+                if (a.reg) parts.push("reg " + a.reg)
+                if (a.squawk) parts.push("squawk " + a.squawk)
+                parts.push(Model.fmtAlt(a.altFt, a.onGround))
+                if (typeof a.distKm === "number" && isFinite(a.distKm))
+                  parts.push(Model.fmtDist(a.distKm, root.units) + " " + (a.compass || ""))
+                return parts.join("   ·   ")
+              }
+              color: Qt.darker(root.fg, 1.4)
+              font.family: root.ff
+              font.pixelSize: Style.font.caption
+              textFormat: Text.PlainText
+            }
+
+            Text {
+              width: parent.width
+              visible: text !== ""
+              text: idCard.dexEntry
+                ? ("✦ in your logbook · seen " + idCard.dexEntry.n + "× · first "
+                   + root.shortDate(idCard.dexEntry.first))
+                : (idCard.a.id && idCard.a.id.known ? "not in your logbook yet" : "")
+              color: idCard.dexEntry ? Color.accent : Qt.darker(root.fg, 1.6)
+              font.family: root.ff
+              font.pixelSize: Style.font.caption
+              textFormat: Text.PlainText
+            }
+          }
+        }
+
+        // ---- Logbook (Dex) view
+        Column {
+          width: parent.width
+          spacing: Style.space(9)
+          visible: root.view === "dex" && !root.editingLocation
+
+          Text {
+            width: parent.width
+            text: root.dexDiscoveredCount + " / " + root.dexUniverse + " types logged"
+                + (root.dexRareCount > 0 ? "   ·   " + root.dexRareCount + " rare" : "")
+                + (root.dexExoticCount > 0 ? "   ·   " + root.dexExoticCount + " exotic" : "")
+            color: Qt.darker(root.fg, 1.2)
+            font.family: root.ff
+            font.pixelSize: Style.font.bodySmall
+            textFormat: Text.PlainText
+          }
+
+          Rectangle {
+            width: parent.width
+            height: Style.space(6)
+            radius: height / 2
+            color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.14)
+            Rectangle {
+              height: parent.height
+              radius: height / 2
+              color: Color.accent
+              width: Math.max(height, parent.width * (root.dexUniverse > 0
+                     ? root.dexDiscoveredCount / root.dexUniverse : 0))
+            }
+          }
+
+          Text {
+            visible: root.dexDiscoveredCount === 0
+            width: parent.width
+            wrapMode: Text.WordWrap
+            text: "Nothing logged yet. Leave Flyby running — every aircraft type that "
+                + "crosses your range gets added here, and a new one raises a note."
+            color: Qt.darker(root.fg, 1.5)
+            font.family: root.ff
+            font.pixelSize: Style.font.caption
+            font.italic: true
+          }
+
+          // spec card for a tapped Logbook entry
+          Rectangle {
+            width: parent.width
+            visible: root.dexSelectedCode !== "" && Data.typeInfo(root.dexSelectedCode) !== null
+            radius: Style.cornerRadius
+            color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.05)
+            implicitHeight: dexCard.implicitHeight + Style.space(20)
+            Column {
+              id: dexCard
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.top: parent.top
+              anchors.margins: Style.space(12)
+              spacing: Style.space(3)
+              readonly property var info: Data.typeInfo(root.dexSelectedCode)
+              readonly property var e: root.dex.types ? root.dex.types[root.dexSelectedCode] : null
+              Text {
+                width: parent.width
+                text: dexCard.info ? dexCard.info.n : ""
+                color: root.fg
+                font.bold: true
+                font.family: root.ff
+                font.pixelSize: Style.font.subtitle
+                elide: Text.ElideRight
+                textFormat: Text.PlainText
+              }
+              Text {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: dexCard.info ? Model.specSummary(dexCard.info) : ""
+                color: Qt.darker(root.fg, 1.5)
+                font.family: root.ff
+                font.pixelSize: Style.font.caption
+                textFormat: Text.PlainText
+              }
+              Text {
+                width: parent.width
+                visible: dexCard.e !== null && dexCard.e !== undefined
+                text: dexCard.e
+                  ? ("✦ seen " + dexCard.e.n + "× · first " + root.shortDate(dexCard.e.first)
+                     + " · last " + root.shortDate(dexCard.e.last))
+                  : ""
+                color: Color.accent
+                font.family: root.ff
+                font.pixelSize: Style.font.caption
+                textFormat: Text.PlainText
+              }
+            }
+          }
+
+          // the grid — discovered first, then a capped run of blanks to fill
+          Flow {
+            width: parent.width
+            spacing: Style.space(5)
+
+            Repeater {
+              model: root.dexGridModel.slice(0, root.dexDiscoveredCount + 24)
+              Rectangle {
+                required property var modelData
+                readonly property var info: Data.typeInfo(modelData)
+                readonly property var e: root.dex.types ? root.dex.types[modelData] : null
+                readonly property bool got: e !== null && e !== undefined
+                width: cellRow.implicitWidth + Style.space(14)
+                height: cellRow.implicitHeight + Style.space(8)
+                radius: Style.cornerRadius
+                color: root.dexSelectedCode === modelData
+                       ? Style.selectedFillFor(root.fg, Color.accent)
+                     : (cellArea.containsMouse && got)
+                       ? Style.hoverFillFor(root.fg, Color.accent)
+                     : Qt.rgba(root.fg.r, root.fg.g, root.fg.b, got ? 0.07 : 0.03)
+                Row {
+                  id: cellRow
+                  anchors.centerIn: parent
+                  spacing: Style.space(4)
+                  Rectangle {
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: parent.parent.got
+                    width: Style.space(4)
+                    height: Style.space(4)
+                    radius: width / 2
+                    color: root.rarityColor(parent.parent.info ? parent.parent.info.r : "")
+                  }
+                  Text {
+                    text: parent.parent.got
+                          ? (parent.parent.info ? parent.parent.info.s : modelData)
+                          : "???"
+                    color: parent.parent.got ? root.fg : Qt.darker(root.fg, 2.2)
+                    font.family: root.ff
+                    font.pixelSize: Style.font.caption
+                    font.bold: parent.parent.got
+                    textFormat: Text.PlainText
+                  }
+                  Text {
+                    visible: parent.parent.got && parent.parent.e && parent.parent.e.n > 1
+                    text: "×" + (parent.parent.e ? parent.parent.e.n : "")
+                    color: Qt.darker(root.fg, 1.5)
+                    font.family: root.ff
+                    font.pixelSize: Style.font.caption
+                  }
+                }
+                MouseArea {
+                  id: cellArea
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  enabled: parent.got
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.dexSelectedCode =
+                      (root.dexSelectedCode === parent.modelData) ? "" : parent.modelData
+                }
+              }
+            }
+          }
+
+          Text {
+            visible: root.dexGridModel.length > root.dexDiscoveredCount + 24
+            width: parent.width
+            text: "＋ " + (root.dexGridModel.length - root.dexDiscoveredCount - 24)
+                + " more types out there to spot"
+            color: Qt.darker(root.fg, 1.7)
+            font.family: root.ff
+            font.pixelSize: Style.font.caption
+            textFormat: Text.PlainText
+          }
+
+          Text {
+            visible: root.dexDiscoveredCount > 0
+            width: parent.width
+            horizontalAlignment: Text.AlignHCenter
+            topPadding: Style.space(2)
+            text: "clear logbook"
+            color: Qt.darker(root.fg, 1.8)
+            font.family: root.ff
+            font.pixelSize: Style.font.caption
+            MouseArea {
+              anchors.fill: parent
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.forgetDex()
+            }
           }
         }
 
@@ -684,7 +1263,60 @@ Panel {
               onClicked: root.put("provider", root.provider === "adsb.lol" ? "adsb.fi" : "adsb.lol")
             }
           }
+
+          // altitude-colour toggle
+          Rectangle {
+            width: acLabel.implicitWidth + Style.space(14)
+            height: acLabel.implicitHeight + Style.space(7)
+            radius: Style.cornerRadius
+            color: root.altColor ? Style.selectedFillFor(root.fg, Color.accent)
+                 : acArea.containsMouse ? Style.hoverFillFor(root.fg, Color.accent)
+                 : Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.05)
+            Text {
+              id: acLabel
+              anchors.centerIn: parent
+              text: root.altColor ? "◐ alt colour" : "○ flat colour"
+              color: root.altColor ? Color.accent : Qt.darker(root.fg, 1.4)
+              font.family: root.ff
+              font.pixelSize: Style.font.caption
+              textFormat: Text.PlainText
+            }
+            MouseArea {
+              id: acArea
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.put("altColor", !root.altColor)
+            }
+          }
+
+          // readable-pill toggle
+          Rectangle {
+            width: rpLabel.implicitWidth + Style.space(14)
+            height: rpLabel.implicitHeight + Style.space(7)
+            radius: Style.cornerRadius
+            color: root.readablePill ? Style.selectedFillFor(root.fg, Color.accent)
+                 : rpArea.containsMouse ? Style.hoverFillFor(root.fg, Color.accent)
+                 : Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.05)
+            Text {
+              id: rpLabel
+              anchors.centerIn: parent
+              text: root.readablePill ? "pill: type" : "pill: callsign"
+              color: root.readablePill ? Color.accent : Qt.darker(root.fg, 1.4)
+              font.family: root.ff
+              font.pixelSize: Style.font.caption
+              textFormat: Text.PlainText
+            }
+            MouseArea {
+              id: rpArea
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.put("readablePill", !root.readablePill)
+            }
+          }
         }
+      }
       }
     }
   }

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "bert.flyby",
   "name": "Flyby",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "@AlbertDIII",
   "description": "Radar scope of the aircraft flying over you, from live community ADS-B data",
   "kinds": [
@@ -24,7 +24,10 @@
       "provider": "adsb.lol",
       "units": "km",
       "notifyOverhead": false,
-      "showGround": false
+      "notifyDiscovery": true,
+      "showGround": false,
+      "readablePill": false,
+      "altColor": false
     },
     "schema": [
       { "key": "latitude", "type": "string", "label": "Latitude", "description": "Decimal degrees, e.g. 29.4241. Leave blank and use “Locate me” in the popup." },
@@ -33,7 +36,10 @@
       { "key": "provider", "type": "enum", "label": "Data source", "options": ["adsb.lol", "adsb.fi"], "defaultValue": "adsb.lol" },
       { "key": "units", "type": "enum", "label": "Distance units", "options": ["km", "mi", "nm"], "defaultValue": "km" },
       { "key": "notifyOverhead", "type": "boolean", "label": "Notify when a plane passes overhead", "defaultValue": false },
-      { "key": "showGround", "type": "boolean", "label": "Include aircraft on the ground", "defaultValue": false }
+      { "key": "notifyDiscovery", "type": "boolean", "label": "Notify when a new aircraft type is logged", "defaultValue": true },
+      { "key": "showGround", "type": "boolean", "label": "Include aircraft on the ground", "defaultValue": false },
+      { "key": "readablePill", "type": "boolean", "label": "Bar pill shows aircraft type instead of callsign", "defaultValue": false },
+      { "key": "altColor", "type": "boolean", "label": "Colour radar blips by altitude", "defaultValue": false }
     ]
   }
 }
