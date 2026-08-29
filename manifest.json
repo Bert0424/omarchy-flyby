@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "id": "bert.flyby",
+  "name": "Flyby",
+  "version": "0.1.0",
+  "author": "@AlbertDIII",
+  "description": "Radar scope of the aircraft flying over you, from live community ADS-B data",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Flyby",
+    "description": "Radar scope of nearby aircraft — click the pill to open the scope",
+    "category": "Info",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "latitude": "",
+      "longitude": "",
+      "radiusNm": "25",
+      "provider": "adsb.lol",
+      "units": "km",
+      "notifyOverhead": false,
+      "showGround": false
+    },
+    "schema": [
+      { "key": "latitude", "type": "string", "label": "Latitude", "description": "Decimal degrees, e.g. 29.4241. Leave blank and use “Locate me” in the popup." },
+      { "key": "longitude", "type": "string", "label": "Longitude", "description": "Decimal degrees, e.g. -98.4936." },
+      { "key": "radiusNm", "type": "enum", "label": "Range (nm)", "options": ["5", "10", "25", "50", "100"], "defaultValue": "25" },
+      { "key": "provider", "type": "enum", "label": "Data source", "options": ["adsb.lol", "adsb.fi"], "defaultValue": "adsb.lol" },
+      { "key": "units", "type": "enum", "label": "Distance units", "options": ["km", "mi", "nm"], "defaultValue": "km" },
+      { "key": "notifyOverhead", "type": "boolean", "label": "Notify when a plane passes overhead", "defaultValue": false },
+      { "key": "showGround", "type": "boolean", "label": "Include aircraft on the ground", "defaultValue": false }
+    ]
+  }
+}
