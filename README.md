@@ -1,27 +1,30 @@
 # Flyby
 
-A bar widget that shows the aircraft flying over you on a live **radar scope**,
-built from free community ADS-B data — and quietly keeps a **logbook** of every
-aircraft type you've spotted.
+An Omarchy bar widget that turns the sky over your head into a **radar scope**,
+an **identity card** for anything on it, and a **logbook** you fill by spotting
+aircraft types — built entirely on free community ADS-B data, no account.
 
-Click the pill to open the scope: a sweeping radar with range rings and a blip
-per aircraft, each drawn as a little silhouette for its class (widebody,
-narrowbody, GA, helicopter, military…) and placed by real bearing and distance.
-Click a blip — or press **N** — to pull up its **identity card**: the full type
-name, the operator decoded from the callsign, and a spec sheet (wingspan,
-weight, cruise, range, first-flight year) from bundled offline data. Unusual
-traffic — military, vintage, rare airframes — is flagged. For a selected
-aircraft it also looks up the **route** (origin → destination airports, with a
-progress bar and rough ETA), the **registered owner**, and — if you turn it on —
-a **photo** of that airframe.
+- **Scope** — a sweeping radar; each contact is a silhouette for its class
+  (widebody, narrowbody, GA, helicopter, military, vintage…), placed by real
+  bearing and distance, optionally coloured by altitude. The bar pill shows how
+  many are in range, or the closest one's callsign / type with a pulsing dot
+  when something is directly overhead.
+- **Identity card** — click a blip (or press **N**): full type name, the
+  operator decoded from the callsign, a spec sheet from ~200 bundled aircraft
+  types (wingspan, weight, cruise, range, first-flight year), and an
+  **⚠ unusual** flag for military / vintage / rare / feed-flagged traffic. For
+  the selected aircraft it also looks up the **route** (origin → destination,
+  with a progress bar and ETA), the **registered owner**, and — opt-in — a
+  **photo** of that airframe.
+- **Logbook** — every type that crosses your range is recorded. A grid of what
+  you've spotted with per-type counts and rarity, a completion bar, spec cards,
+  and a "✦ new in your logbook" note when a type shows up for the first time.
+  The logbook card can show the actual airframe that earned you the entry.
 
-Every type that crosses your range is added to the **Logbook** (press **L**, or
-the toggle up top). New types raise a one-line "✦ new in your logbook" note.
-Tap any logged type for its spec card — and once you've looked up an airframe of
-that type that had a photo, the card shows that plane (the one that earned you
-the entry).
-
-![preview](preview.png)
+<p>
+  <img src="preview.png" width="330" alt="Scope with an identity card open">
+  <img src="docs/logbook.png" width="330" alt="The Logbook filling up">
+</p>
 
 ## Install
 
@@ -112,7 +115,7 @@ is deliberately gentle; don't crank it.
   refuses symlinks and caps its input, and any stored photo URL is re-checked
   against the host allowlist before it is used. "Clear logbook" wipes it. Your coordinates / range / units / toggles are stored by Omarchy in
   `~/.config/omarchy/shell.json` like every other bar widget.
-- **Bundled data:** `Data.js` — ~190 aircraft types and ~160 airline codes,
+- **Bundled data:** `Data.js` — ~200 aircraft types and ~160 airline codes,
   static reference data compiled from public sources. Inert; no code runs from it.
 - **Processes:** `curl` (the fetches, each `timeout`-bounded and byte-capped)
   and `omarchy-notification-send` (only for the overhead / new-type notes, when

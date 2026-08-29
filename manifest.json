@@ -4,7 +4,7 @@
   "name": "Flyby",
   "version": "0.2.0",
   "author": "@AlbertDIII",
-  "description": "Radar scope of the aircraft flying over you, from live community ADS-B data",
+  "description": "A radar scope of the aircraft overhead — identify any of them (type, operator, route, specs, photo) and fill a logbook of every type you've spotted. Free community ADS-B data, no account.",
   "kinds": [
     "bar-widget"
   ],
@@ -13,7 +13,7 @@
   },
   "barWidget": {
     "displayName": "Flyby",
-    "description": "Radar scope of nearby aircraft — click the pill to open the scope",
+    "description": "Radar scope of nearby aircraft, an identity card for any of them, and a logbook of the types you've spotted",
     "category": "Info",
     "allowMultiple": false,
     "defaultSection": "right",

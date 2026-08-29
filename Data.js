@@ -132,6 +132,11 @@ var AIRCRAFT_TYPES = {
   "C206": { n: "Cessna 206 Stationair", s: "206", m: "Cessna",  c: "piston",    r: "common",   ws: 10.9, ln: 8.6,  mtow: 1.6, crz: 142, eng: 1, et: "Piston", pax: 5, rng: 1350, yr: 1962, wake: "L" },
   "C210": { n: "Cessna 210 Centurion", s: "210",  m: "Cessna",  c: "piston",    r: "uncommon", ws: 11.2, ln: 8.6,  mtow: 1.7, crz: 170, eng: 1, et: "Piston", pax: 5, rng: 1670, yr: 1957, wake: "L" },
   "C310": { n: "Cessna 310",         s: "310",    m: "Cessna",  c: "piston",    r: "uncommon", ws: 11.3, ln: 9.7,  mtow: 2.4, crz: 190, eng: 2, et: "Piston", pax: 5, rng: 2800, yr: 1953, wake: "L" },
+  "T206": { n: "Cessna T206 Turbo Stationair", s: "T206", m: "Cessna", c: "piston", r: "common",   ws: 10.9, ln: 8.6, mtow: 1.6, crz: 164, eng: 1, et: "Piston", pax: 6, rng: 1200, yr: 1966, wake: "L" },
+  "P210": { n: "Cessna P210 Pressurized Centurion", s: "P210", m: "Cessna", c: "piston", r: "uncommon", ws: 11.9, ln: 8.8, mtow: 1.8, crz: 190, eng: 1, et: "Piston", pax: 5, rng: 1900, yr: 1978, wake: "L" },
+  "C77R": { n: "Cessna 177RG Cardinal RG", s: "177RG", m: "Cessna", c: "piston", r: "uncommon", ws: 10.8, ln: 8.4, mtow: 1.3, crz: 148, eng: 1, et: "Piston", pax: 3, rng: 1500, yr: 1970, wake: "L" },
+  "BE35": { n: "Beechcraft Bonanza 35 (V-tail)", s: "V35", m: "Beechcraft", c: "piston", r: "uncommon", ws: 10.2, ln: 8.0, mtow: 1.5, crz: 170, eng: 1, et: "Piston", pax: 3, rng: 1300, yr: 1947, wake: "L" },
+  "E300": { n: "Extra EA-300 (aerobatic)", s: "Extra 300", m: "Extra", c: "piston", r: "uncommon", ws: 8.0, ln: 6.7, mtow: 0.95, crz: 190, eng: 1, et: "Piston", pax: 1, rng: 900, yr: 1988, wake: "L" },
   "P28A": { n: "Piper PA-28 Cherokee / Archer", s: "PA-28", m: "Piper", c: "piston", r: "common", ws: 10.7, ln: 7.3, mtow: 1.2, crz: 118, eng: 1, et: "Piston", pax: 3, rng: 990, yr: 1960, wake: "L" },
   "P28R": { n: "Piper PA-28R Arrow", s: "PA-28R", m: "Piper", c: "piston",    r: "uncommon", ws: 10.8, ln: 7.5,  mtow: 1.2, crz: 137, eng: 1, et: "Piston", pax: 3, rng: 1390, yr: 1967, wake: "L" },
   "PA44": { n: "Piper PA-44 Seminole", s: "PA-44", m: "Piper", c: "piston",    r: "uncommon", ws: 11.8, ln: 8.4,  mtow: 1.7, crz: 145, eng: 2, et: "Piston", pax: 3, rng: 1500, yr: 1976, wake: "L" },
@@ -150,6 +155,8 @@ var AIRCRAFT_TYPES = {
   "RV7":  { n: "Van's RV-7",         s: "RV-7",   m: "Van's",   c: "piston",    r: "uncommon", ws: 7.6,  ln: 6.2,  mtow: 0.82, crz: 165, eng: 1, et: "Piston", pax: 1, rng: 1500, yr: 2001, wake: "L" },
   "RV10": { n: "Van's RV-10",        s: "RV-10",  m: "Van's",   c: "piston",    r: "uncommon", ws: 9.8,  ln: 7.4,  mtow: 1.2, crz: 168, eng: 1, et: "Piston", pax: 3, rng: 1400, yr: 2003, wake: "L" },
   "BE18": { n: "Beechcraft Model 18", s: "Twin Beech", m: "Beechcraft", c: "vintage", r: "rare", ws: 14.5, ln: 10.4, mtow: 4.5, crz: 150, eng: 2, et: "Piston", pax: 8, rng: 1200, yr: 1937, wake: "L" },
+  "S108": { n: "Stinson 108 Voyager", s: "Stinson 108", m: "Stinson", c: "vintage", r: "rare", ws: 10.4, ln: 7.6, mtow: 1.1, crz: 105, eng: 1, et: "Piston", pax: 3, rng: 800, yr: 1946, wake: "L" },
+  "NAVI": { n: "Ryan Navion", s: "Navion", m: "Ryan", c: "vintage", r: "rare", ws: 10.4, ln: 8.4, mtow: 1.4, crz: 130, eng: 1, et: "Piston", pax: 3, rng: 1000, yr: 1947, wake: "L" },
 
   // ---- Business jets / King Air --------------------------------
   "BE20": { n: "Beechcraft King Air 200", s: "King Air 200", m: "Beechcraft", c: "turboprop", r: "common", ws: 16.6, ln: 13.4, mtow: 5.7, crz: 289, eng: 2, et: "Turboprop", pax: 8, rng: 3300, yr: 1972, wake: "L" },
@@ -181,6 +188,9 @@ var AIRCRAFT_TYPES = {
   "H25B": { n: "Hawker 800 / 900XP",   s: "Hawker 800", m: "Hawker", c: "business", r: "uncommon", ws: 15.7, ln: 15.6, mtow: 12.7, crz: 447, eng: 2, et: "Jet", pax: 8, rng: 5000, yr: 1983, wake: "M" },
   "PRM1": { n: "Beechcraft Premier I", s: "Premier I", m: "Beechcraft", c: "business", r: "rare", ws: 13.6, ln: 14.0, mtow: 5.7, crz: 450, eng: 2, et: "Jet", pax: 6, rng: 2760, yr: 1998, wake: "L" },
   "HDJT": { n: "Honda HA-420 HondaJet", s: "HondaJet", m: "Honda", c: "business", r: "uncommon", ws: 12.1, ln: 12.7, mtow: 4.8, crz: 422, eng: 2, et: "Jet", pax: 5, rng: 2260, yr: 2003, wake: "L" },
+  "FA20": { n: "Dassault Falcon 20", s: "Falcon 20", m: "Dassault", c: "business", r: "uncommon", ws: 16.3, ln: 17.2, mtow: 13.0, crz: 465, eng: 2, et: "Jet", pax: 9, rng: 3300, yr: 1963, wake: "M" },
+  "F900": { n: "Dassault Falcon 900", s: "Falcon 900", m: "Dassault", c: "business", r: "uncommon", ws: 19.3, ln: 20.2, mtow: 20.6, crz: 480, eng: 3, et: "Jet", pax: 12, rng: 7400, yr: 1984, wake: "M" },
+  "CL35": { n: "Bombardier Challenger 350", s: "Challenger 350", m: "Bombardier", c: "business", r: "common", ws: 21.0, ln: 20.9, mtow: 18.4, crz: 470, eng: 2, et: "Jet", pax: 9, rng: 6300, yr: 2013, wake: "M" },
 
   // ---- Helicopters -------------------------------------------
   "R22":  { n: "Robinson R22",        s: "R22",    m: "Robinson", c: "heli",    r: "common",   ws: 7.7,  ln: 8.8,  mtow: 0.62, crz: 96,  eng: 1, et: "Piston", pax: 1, rng: 390, yr: 1975, wake: "L" },
